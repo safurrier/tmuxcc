@@ -7,6 +7,10 @@ pub enum Action {
     NextAgent,
     /// Navigate to previous agent
     PrevAgent,
+    /// Jump to next session header
+    NextSession,
+    /// Jump to previous session header
+    PrevSession,
     /// Toggle selection of current agent
     ToggleSelection,
     /// Select all agents
@@ -91,6 +95,18 @@ pub enum Action {
     RenameExecute(String),
     /// Cancel rename mode
     RenameCancel,
+    /// Toggle showing all panes vs agents only
+    ToggleAllPanes,
+    /// Start search mode in sidebar
+    SearchStart,
+    /// Add character to search query
+    SearchChar(char),
+    /// Delete last character from search query
+    SearchBackspace,
+    /// Confirm search (exit search mode, keep filter)
+    SearchConfirm,
+    /// Cancel search (exit search mode, clear filter)
+    SearchCancel,
     /// No action (used for unbound keys)
     None,
 }
@@ -102,6 +118,8 @@ impl Action {
             Action::Quit => "Quit application",
             Action::NextAgent => "Select next agent",
             Action::PrevAgent => "Select previous agent",
+            Action::NextSession => "Jump to next session",
+            Action::PrevSession => "Jump to previous session",
             Action::ToggleSelection => "Toggle selection",
             Action::SelectAll => "Select all agents",
             Action::ClearSelection => "Clear selection",
@@ -144,6 +162,12 @@ impl Action {
             Action::RenameStart => "Rename window",
             Action::RenameExecute(_) => "Execute rename",
             Action::RenameCancel => "Cancel rename",
+            Action::ToggleAllPanes => "Toggle all panes",
+            Action::SearchStart => "Search sessions",
+            Action::SearchChar(_) => "Type search character",
+            Action::SearchBackspace => "Delete search character",
+            Action::SearchConfirm => "Confirm search",
+            Action::SearchCancel => "Cancel search",
             Action::None => "",
         }
     }

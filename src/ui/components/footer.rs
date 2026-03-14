@@ -140,6 +140,32 @@ impl FooterWidget {
             return;
         }
 
+        // Search mode footer
+        if state.search_mode {
+            let line = Line::from(vec![
+                Span::styled(
+                    " SEARCH ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("\u{2502}", sep),
+                Span::styled(" Type to filter", txt),
+                Span::styled(" | ", sep),
+                Span::styled("Enter", key),
+                Span::styled(":Keep ", txt),
+                Span::styled("ESC", key),
+                Span::styled(":Clear", txt),
+                Span::styled(" | ", sep),
+                Span::styled("\u{2191}\u{2193}", key),
+                Span::styled(":Navigate", txt),
+            ]);
+            let paragraph = Paragraph::new(line);
+            frame.render_widget(paragraph, area);
+            return;
+        }
+
         // Pending kill footer
         if let Some((ref target, _)) = state.pending_kill {
             let line = Line::from(vec![

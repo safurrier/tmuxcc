@@ -38,6 +38,10 @@ pub struct ClaudeCodeParser {
 
     // Context remaining pattern
     context_pattern: Regex,
+
+    // Background task patterns
+    bg_task_running_pattern: Regex,
+    bg_task_completed_pattern: Regex,
 }
 
 impl ClaudeCodeParser {
@@ -81,6 +85,16 @@ impl ClaudeCodeParser {
             // Context remaining pattern (e.g., "Context left until auto-compact: 42%")
             context_pattern: Regex::new(
                 r"(?i)Context\s+(?:left|remaining).*?(\d+)%"
+            ).unwrap(),
+
+            // Background task patterns
+            // "1 background task still running", "2 background tasks still running"
+            bg_task_running_pattern: Regex::new(
+                r"(\d+)\s+background\s+tasks?\s+still\s+running"
+            ).unwrap(),
+            // "Background command ... completed (exit code N)" or "completed" / "failed"
+            bg_task_completed_pattern: Regex::new(
+                r"(?i)background\s+(?:command|task).*?(?:completed|failed|finished)"
             ).unwrap(),
         }
     }
@@ -345,11 +359,15 @@ impl ClaudeCodeParser {
     fn detect_active_work(&self, content: &str) -> bool {
         let lines: Vec<&str> = content.lines().collect();
         let last_n = &lines[lines.len().saturating_sub(15)..];
-        let recent = last_n.join("\n");
 
         // Background tasks: "N background task(s) still running"
-        if recent.contains("background task") && recent.contains("running") {
-            return true;
+        // Search full content since this status line scrolls up as the agent produces
+        // more output. To avoid stale hits, we parse the task count and compare against
+        // completion lines that appear after it.
+        if let Some(running_count) = self.count_running_background_tasks(content) {
+            if running_count > 0 {
+                return true;
+            }
         }
 
         // Active spinner in content (gerund + ellipsis): "✻ Leavening…", "· Forming…"
@@ -372,6 +390,7 @@ impl ClaudeCodeParser {
         }
 
         // "Running N Explore agents" or similar
+        let recent = last_n.join("\n");
         if recent.contains("Running") && recent.contains("agent") {
             return true;
         }
@@ -383,13 +402,9 @@ impl ClaudeCodeParser {
     fn extract_activity(&self, content: &str) -> Option<String> {
         let lines: Vec<&str> = content.lines().collect();
 
+        // Check recent lines first for spinners
         for line in lines.iter().rev().take(10) {
             let trimmed = line.trim();
-
-            // Background task indicator
-            if trimmed.contains("background task") && trimmed.contains("running") {
-                return Some(trimmed.to_string());
-            }
 
             // Active spinner line — extract the verb
             if trimmed.len() > 2 {
@@ -407,7 +422,44 @@ impl ClaudeCodeParser {
             }
         }
 
+        // Background task indicator — search full content since it may be far above
+        if let Some(remaining) = self.count_running_background_tasks(content) {
+            if remaining > 0 {
+                // Find the actual status line for display
+                for line in lines.iter().rev() {
+                    let trimmed = line.trim();
+                    if self.bg_task_running_pattern.is_match(trimmed) {
+                        let desc = trimmed.chars().take(80).collect::<String>();
+                        return Some(desc);
+                    }
+                }
+                return Some(format!("{} background task(s) running", remaining));
+            }
+        }
+
         None
+    }
+
+    /// Parse background task status from content.
+    /// Finds the last "N background task(s) still running" line, extracts N,
+    /// then counts completion/failure lines after it. Returns Some(remaining)
+    /// where remaining = N - completions, or None if no running line found.
+    fn count_running_background_tasks(&self, content: &str) -> Option<u32> {
+        // Find the last "N background task(s) still running" match
+        let mut last_match: Option<(usize, u32)> = None;
+        for cap in self.bg_task_running_pattern.captures_iter(content) {
+            if let (Some(m), Ok(n)) = (cap.get(0), cap[1].parse::<u32>()) {
+                last_match = Some((m.start(), n));
+            }
+        }
+
+        let (pos, expected) = last_match?;
+
+        // Count completion/failure lines after that position
+        let after = &content[pos..];
+        let completions = self.bg_task_completed_pattern.find_iter(after).count() as u32;
+
+        Some(expected.saturating_sub(completions))
     }
 
     fn extract_file_path(&self, content: &str) -> Option<String> {
@@ -674,6 +726,98 @@ This is just normal text.
         assert!(
             matches!(status, AgentStatus::Idle),
             "Expected Idle (no false positive), got {:?}",
+            status
+        );
+    }
+
+    #[test]
+    fn test_background_task_still_running() {
+        let parser = ClaudeCodeParser::new();
+        // Background task running, with lots of output after the status line
+        let content = r#"
+✻ Cooked for 11m 30s · 1 background task still running (↓ to manage)
+
+● Read 1 file (ctrl+o to expand)
+
+● Here is some analysis of the data that spans many lines.
+  The agent keeps producing output below the status line.
+  This pushes the "still running" line far above the last 15 lines.
+  Line 4
+  Line 5
+  Line 6
+  Line 7
+  Line 8
+  Line 9
+  Line 10
+  Line 11
+  Line 12
+  Line 13
+  Line 14
+  Line 15
+  Line 16
+  Line 17
+  Line 18
+❯ "#;
+        let status = parser.parse_status(content);
+        assert!(
+            matches!(status, AgentStatus::Processing { .. }),
+            "Expected Processing for active background task, got {:?}",
+            status
+        );
+    }
+
+    #[test]
+    fn test_background_task_completed() {
+        let parser = ClaudeCodeParser::new();
+        // Background task was running but has since completed
+        let content = r#"
+✻ Cooked for 11m 30s · 1 background task still running (↓ to manage)
+
+● Background command "Check older data range" completed (exit code 0)
+
+● Read 1 file (ctrl+o to expand)
+
+● That was the background task checking the table. Confirms deep history.
+  Line 4
+  Line 5
+  Line 6
+  Line 7
+  Line 8
+  Line 9
+  Line 10
+  Line 11
+  Line 12
+  Line 13
+  Line 14
+  Line 15
+  Line 16
+❯ "#;
+        let status = parser.parse_status(content);
+        assert!(
+            matches!(status, AgentStatus::Idle),
+            "Expected Idle after background task completed, got {:?}",
+            status
+        );
+    }
+
+    #[test]
+    fn test_background_tasks_partial_completion() {
+        let parser = ClaudeCodeParser::new();
+        // 2 background tasks running, only 1 completed
+        let content = r#"
+✻ Cooked for 5m · 2 background tasks still running (↓ to manage)
+
+● Background command "task A" completed (exit code 0)
+
+● Some output here
+  Line after line
+  More output
+  Even more
+❯ "#;
+        let status = parser.parse_status(content);
+        assert!(
+            matches!(status, AgentStatus::Processing { .. }),
+            "Expected Processing with 1 of 2 tasks still running, got {:?}",
             status
         );
     }

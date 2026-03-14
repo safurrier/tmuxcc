@@ -46,6 +46,8 @@ impl HelpWidget {
             blank(),
             key("  j / Down     ", "Next item (session, agent, or pane)", key_style, desc_style),
             key("  k / Up       ", "Previous item", key_style, desc_style),
+            key("  J (shift)    ", "Jump to next session", key_style, desc_style),
+            key("  K (shift)    ", "Jump to previous session", key_style, desc_style),
             blank(),
             Line::from(vec![Span::styled("  Sessions", desc_style)]),
             key("  Enter/Space  ", "Collapse/expand (when cursor on session header)", key_style, desc_style),
@@ -79,7 +81,9 @@ impl HelpWidget {
             key("  s / S        ", "Toggle subagent log panel", key_style, desc_style),
             key("  t / T        ", "Toggle TODO/Tools summary panel", key_style, desc_style),
             key("  <  /  >      ", "Resize sidebar narrower / wider", key_style, desc_style),
+            key("  p            ", "Toggle showing all panes (agents only by default)", key_style, desc_style),
             key("  r            ", "Refresh agent list", key_style, desc_style),
+            key("  /            ", "Search/filter sessions (fuzzy match)", key_style, desc_style),
             blank(),
 
             // ── Preview ──

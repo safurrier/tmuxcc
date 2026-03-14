@@ -100,7 +100,9 @@ impl AgentTreeWidget {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(border_color));
 
-        let tree = SessionWindowTree::new(agents, non_agent_panes, &state.all_sessions);
+        let empty_naps = Vec::new();
+        let naps = if state.show_all_panes { non_agent_panes } else { &empty_naps };
+        let tree = SessionWindowTree::new(agents, naps, &state.all_sessions);
 
         if tree.sessions.is_empty() {
             let empty_text = List::new(vec![ListItem::new(Line::from(vec![Span::styled(
@@ -652,10 +654,42 @@ impl AgentTreeWidget {
             }
         }
 
+        // If search is active or there's a query, split the area for search bar
+        let has_search = state.search_mode || !state.search_query.is_empty();
+        let (list_area, search_area) = if has_search {
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Min(3),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(area);
+            (chunks[0], Some(chunks[1]))
+        } else {
+            (area, None)
+        };
+
         let list = List::new(items).block(block);
         let mut list_state = ListState::default();
         list_state.select(cursor_list_index);
-        frame.render_stateful_widget(list, area, &mut list_state);
+        frame.render_stateful_widget(list, list_area, &mut list_state);
+
+        // Render search bar
+        if let Some(search_area) = search_area {
+            let search_style = if state.search_mode {
+                Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50))
+            } else {
+                Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 30))
+            };
+            let cursor = if state.search_mode { "\u{2588}" } else { "" };
+            let search_text = format!("/{}{}", state.search_query, cursor);
+            let search_line = Line::from(vec![
+                Span::styled(search_text, search_style),
+            ]);
+            let search_widget = ratatui::widgets::Paragraph::new(search_line)
+                .style(search_style);
+            frame.render_widget(search_widget, search_area);
+        }
     }
 }
 

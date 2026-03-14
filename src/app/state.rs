@@ -161,6 +161,12 @@ pub struct AppState {
     pub spawn_mode: Option<String>,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
+    /// Search mode: true when sidebar search is active
+    pub search_mode: bool,
+    /// Search query for filtering sidebar items
+    pub search_query: String,
+    /// Whether to show non-agent panes in the sidebar
+    pub show_all_panes: bool,
 }
 
 impl AppState {
@@ -188,12 +194,65 @@ impl AppState {
             pending_kill: None,
             spawn_mode: None,
             rename_mode: None,
+            search_mode: false,
+            search_query: String::new(),
+            show_all_panes: false,
         }
+    }
+
+    /// Check if a string fuzzy-matches the search query (case-insensitive substring)
+    fn matches_search(&self, text: &str) -> bool {
+        if self.search_query.is_empty() {
+            return true;
+        }
+        let query = self.search_query.to_lowercase();
+        let text_lower = text.to_lowercase();
+        // Check if all query chars appear in order (fuzzy match)
+        let mut text_chars = text_lower.chars();
+        for qc in query.chars() {
+            if !text_chars.any(|tc| tc == qc) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check if a session matches the search query (checks session name, plus any child names)
+    fn session_matches_search(&self, session: &str) -> bool {
+        if self.search_query.is_empty() {
+            return true;
+        }
+        if self.matches_search(session) {
+            return true;
+        }
+        // Check if any agent in this session matches
+        for agent in &self.agents.root_agents {
+            if agent.session == session
+                && (self.matches_search(&agent.path)
+                    || self.matches_search(&agent.window_name)
+                    || self.matches_search(agent.agent_type.short_name()))
+            {
+                return true;
+            }
+        }
+        // Check if any non-agent pane in this session matches (only when showing all panes)
+        if self.show_all_panes {
+            for nap in &self.agents.non_agent_panes {
+                if nap.session == session
+                    && (self.matches_search(&nap.command) || self.matches_search(&nap.window_name))
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Build the flat navigation list: session headers + visible agents + non-agent panes in display order
     pub fn build_nav_items(&self) -> Vec<NavItem> {
         use std::collections::BTreeMap;
+
+        let has_search = !self.search_query.is_empty();
 
         // Group agents by session
         let mut agent_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -204,13 +263,15 @@ impl AppState {
                 .push(idx);
         }
 
-        // Group non-agent panes by session
+        // Group non-agent panes by session (only when showing all panes)
         let mut nap_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-        for (idx, nap) in self.agents.non_agent_panes.iter().enumerate() {
-            nap_sessions
-                .entry(&nap.session)
-                .or_default()
-                .push(idx);
+        if self.show_all_panes {
+            for (idx, nap) in self.agents.non_agent_panes.iter().enumerate() {
+                nap_sessions
+                    .entry(&nap.session)
+                    .or_default()
+                    .push(idx);
+            }
         }
 
         // Collect all session names (from agents, non-agent panes, and all_sessions)
@@ -227,15 +288,39 @@ impl AppState {
 
         let mut items = Vec::new();
         for (session, _) in &all_session_names {
+            // Skip sessions that don't match the search
+            if has_search && !self.session_matches_search(session) {
+                continue;
+            }
+
             items.push(NavItem::Session(session.to_string()));
             if !self.collapsed_sessions.contains(*session) {
                 if let Some(agent_indices) = agent_sessions.get(session) {
                     for &idx in agent_indices {
+                        if has_search {
+                            let agent = &self.agents.root_agents[idx];
+                            if !self.matches_search(session)
+                                && !self.matches_search(&agent.path)
+                                && !self.matches_search(&agent.window_name)
+                                && !self.matches_search(agent.agent_type.short_name())
+                            {
+                                continue;
+                            }
+                        }
                         items.push(NavItem::Agent(idx));
                     }
                 }
                 if let Some(nap_indices) = nap_sessions.get(session) {
                     for &idx in nap_indices {
+                        if has_search {
+                            let nap = &self.agents.non_agent_panes[idx];
+                            if !self.matches_search(session)
+                                && !self.matches_search(&nap.command)
+                                && !self.matches_search(&nap.window_name)
+                            {
+                                continue;
+                            }
+                        }
                         items.push(NavItem::NonAgentPane(idx));
                     }
                 }
@@ -479,6 +564,44 @@ impl AppState {
         self.set_cursor_from_nav(&nav_items[prev_pos]);
     }
 
+    /// Jump to the next session header in navigation order
+    pub fn select_next_session(&mut self) {
+        let nav_items = self.build_nav_items();
+        if nav_items.is_empty() {
+            return;
+        }
+
+        let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+        // Find the next Session item after current position (with wrap)
+        for offset in 1..=nav_items.len() {
+            let pos = (current_pos + offset) % nav_items.len();
+            if matches!(nav_items[pos], NavItem::Session(_)) {
+                self.set_cursor_from_nav(&nav_items[pos]);
+                return;
+            }
+        }
+    }
+
+    /// Jump to the previous session header in navigation order
+    pub fn select_prev_session(&mut self) {
+        let nav_items = self.build_nav_items();
+        if nav_items.is_empty() {
+            return;
+        }
+
+        let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+        // Find the previous Session item before current position (with wrap)
+        for offset in 1..=nav_items.len() {
+            let pos = (current_pos + nav_items.len() - offset) % nav_items.len();
+            if matches!(nav_items[pos], NavItem::Session(_)) {
+                self.set_cursor_from_nav(&nav_items[pos]);
+                return;
+            }
+        }
+    }
+
     /// Find the current cursor's position in the nav items list
     fn find_nav_position(&self, nav_items: &[NavItem]) -> Option<usize> {
         nav_items.iter().position(|item| match (&self.cursor, item) {
@@ -490,7 +613,7 @@ impl AppState {
     }
 
     /// Set cursor from a NavItem
-    fn set_cursor_from_nav(&mut self, item: &NavItem) {
+    pub fn set_cursor_from_nav(&mut self, item: &NavItem) {
         self.cursor = match item {
             NavItem::Session(s) => TreeCursor::Session(s.clone()),
             NavItem::Agent(idx) => TreeCursor::Agent(*idx),

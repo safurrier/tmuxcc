@@ -14,7 +14,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use crate::app::{Action, AppState, Config, TreeCursor};
+use crate::app::{Action, AppState, Config, NavItem, TreeCursor};
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;
@@ -318,6 +318,12 @@ async fn run_loop(
                             Action::PrevAgent => {
                                 state.select_prev();
                             }
+                            Action::NextSession => {
+                                state.select_next_session();
+                            }
+                            Action::PrevSession => {
+                                state.select_prev_session();
+                            }
                             Action::ToggleSelection => {
                                 state.toggle_selection();
                             }
@@ -572,6 +578,49 @@ async fn run_loop(
                                 state.rename_mode = None;
                                 state.take_input();
                             }
+                            Action::ToggleAllPanes => {
+                                state.show_all_panes = !state.show_all_panes;
+                                // If cursor is on a non-agent pane that's now hidden, move to valid item
+                                if !state.show_all_panes {
+                                    if matches!(state.cursor, TreeCursor::NonAgentPane(_)) {
+                                        let nav = state.build_nav_items();
+                                        if !nav.is_empty() {
+                                            state.set_cursor_from_nav(&nav[0]);
+                                        }
+                                    }
+                                }
+                            }
+                            Action::SearchStart => {
+                                state.search_mode = true;
+                                state.search_query.clear();
+                            }
+                            Action::SearchChar(c) => {
+                                state.search_query.push(c);
+                                // Move cursor to first match if current isn't visible
+                                let nav = state.build_nav_items();
+                                if !nav.is_empty() {
+                                    let current_visible = nav.iter().any(|item| match (&state.cursor, item) {
+                                        (TreeCursor::Session(s1), NavItem::Session(s2)) => s1 == s2,
+                                        (TreeCursor::Agent(i1), NavItem::Agent(i2)) => i1 == i2,
+                                        (TreeCursor::NonAgentPane(i1), NavItem::NonAgentPane(i2)) => i1 == i2,
+                                        _ => false,
+                                    });
+                                    if !current_visible {
+                                        state.set_cursor_from_nav(&nav[0]);
+                                    }
+                                }
+                            }
+                            Action::SearchBackspace => {
+                                state.search_query.pop();
+                            }
+                            Action::SearchConfirm => {
+                                state.search_mode = false;
+                                // Keep the filter active
+                            }
+                            Action::SearchCancel => {
+                                state.search_mode = false;
+                                state.search_query.clear();
+                            }
                             Action::None => {}
                         }
                     }
@@ -595,6 +644,20 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp,
             KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('h') => Action::HideHelp,
             _ => Action::None,  // ignore other keys while help is open
+        };
+    }
+
+    // If search mode is active, handle search keys
+    if state.search_mode {
+        return match code {
+            KeyCode::Enter => Action::SearchConfirm,
+            KeyCode::Esc => Action::SearchCancel,
+            KeyCode::Backspace => Action::SearchBackspace,
+            KeyCode::Char(c) => Action::SearchChar(c),
+            // Allow navigation while searching
+            KeyCode::Down => Action::NextAgent,
+            KeyCode::Up => Action::PrevAgent,
+            _ => Action::None,
         };
     }
 
@@ -671,6 +734,8 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         KeyCode::Char('j') | KeyCode::Down => Action::NextAgent,
         KeyCode::Char('k') | KeyCode::Up => Action::PrevAgent,
+        KeyCode::Char('J') => Action::NextSession,
+        KeyCode::Char('K') => Action::PrevSession,
         KeyCode::Tab => Action::CycleFocus,
         KeyCode::BackTab => Action::FocusInput,
 
@@ -743,10 +808,18 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('<') => Action::SidebarNarrower,
         KeyCode::Char('>') => Action::SidebarWider,
 
+        // Toggle all panes
+        KeyCode::Char('p') => Action::ToggleAllPanes,
+
+        // Search
+        KeyCode::Char('/') => Action::SearchStart,
+
         KeyCode::Char('h') | KeyCode::Char('?') => Action::ShowHelp,
 
         KeyCode::Esc => {
-            if !state.selected_agents.is_empty() {
+            if !state.search_query.is_empty() {
+                Action::SearchCancel
+            } else if !state.selected_agents.is_empty() {
                 Action::ClearSelection
             } else if state.show_subagent_log {
                 Action::ToggleSubagentLog
