@@ -14,7 +14,9 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use crate::app::{Action, AppState, Config, FlashMode, FlashTarget, TreeCursor, generate_flash_labels};
+use crate::app::{
+    generate_flash_labels, Action, AppState, Config, FlashMode, FlashTarget, TreeCursor,
+};
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;

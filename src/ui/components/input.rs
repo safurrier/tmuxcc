@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{AppState, FlashTarget, generate_flash_labels};
+use crate::app::{generate_flash_labels, AppState, FlashTarget};
 
 /// Input widget for text entry at the bottom of the right column
 pub struct InputWidget;

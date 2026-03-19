@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::agents::{AgentStatus, AgentType, ApprovalType, MonitoredAgent, SubagentStatus};
-use crate::app::{AppState, FlashTarget, NavItem, NonAgentPane, TreeCursor, generate_flash_labels};
+use crate::app::{generate_flash_labels, AppState, FlashTarget, NavItem, NonAgentPane, TreeCursor};
 
 /// Widget for displaying agents in a tree organized by session/window
 pub struct AgentTreeWidget;
@@ -330,10 +330,7 @@ impl AgentTreeWidget {
 
                                 let (select_indicator, select_indicator_style) =
                                     if let Some(label) = agent_flash.get(original_idx) {
-                                        (
-                                            format!("{:<2}", label),
-                                            flash_style,
-                                        )
+                                        (format!("{:<2}", label), flash_style)
                                     } else if is_selected && is_cursor {
                                         (
                                             "\u{2503}\u{2611}".to_string(),
@@ -344,20 +341,11 @@ impl AgentTreeWidget {
                                             },
                                         )
                                     } else if is_selected {
-                                        (
-                                            " \u{2611}".to_string(),
-                                            Style::default().fg(Color::Cyan),
-                                        )
+                                        (" \u{2611}".to_string(), Style::default().fg(Color::Cyan))
                                     } else if is_cursor {
-                                        (
-                                            "\u{2503} ".to_string(),
-                                            Style::default().fg(Color::White),
-                                        )
+                                        ("\u{2503} ".to_string(), Style::default().fg(Color::White))
                                     } else {
-                                        (
-                                            "  ".to_string(),
-                                            Style::default().fg(Color::White),
-                                        )
+                                        ("  ".to_string(), Style::default().fg(Color::White))
                                     };
 
                                 // Status indicator and text
@@ -409,10 +397,7 @@ impl AgentTreeWidget {
 
                                 // Main line: status + path
                                 let line = Line::from(vec![
-                                    Span::styled(
-                                        select_indicator,
-                                        select_indicator_style,
-                                    ),
+                                    Span::styled(select_indicator, select_indicator_style),
                                     Span::styled(tree_prefix, Style::default().fg(Color::DarkGray)),
                                     Span::styled(status_char, status_style),
                                     Span::raw(" "),
@@ -715,15 +700,9 @@ impl AgentTreeWidget {
                                     if let Some(label) = nap_flash.get(nap_idx) {
                                         (format!("{:<2}", label), flash_style)
                                     } else if is_cursor {
-                                        (
-                                            "\u{2503} ".to_string(),
-                                            Style::default().fg(Color::White),
-                                        )
+                                        ("\u{2503} ".to_string(), Style::default().fg(Color::White))
                                     } else {
-                                        (
-                                            "  ".to_string(),
-                                            Style::default().fg(Color::White),
-                                        )
+                                        ("  ".to_string(), Style::default().fg(Color::White))
                                     };
 
                                 let item_style = if is_cursor {
@@ -737,10 +716,7 @@ impl AgentTreeWidget {
                                 }
 
                                 let line = Line::from(vec![
-                                    Span::styled(
-                                        cursor_indicator,
-                                        cursor_indicator_style,
-                                    ),
+                                    Span::styled(cursor_indicator, cursor_indicator_style),
                                     Span::styled(tree_prefix, Style::default().fg(Color::DarkGray)),
                                     Span::styled("\u{25cb} ", Style::default().fg(Color::DarkGray)),
                                     Span::styled(
