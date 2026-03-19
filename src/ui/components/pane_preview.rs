@@ -98,7 +98,11 @@ impl PanePreviewWidget {
                 .title(format!(" {} ", agent.agent_type.short_name()))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if state.is_preview_focused() { Color::Cyan } else { Color::Gray }));
+                .border_style(Style::default().fg(if state.is_preview_focused() {
+                    Color::Cyan
+                } else {
+                    Color::Gray
+                }));
 
             let inner_area = outer_block.inner(area);
             frame.render_widget(outer_block, area);
@@ -206,7 +210,11 @@ impl PanePreviewWidget {
                 .title(" Summary ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if state.is_preview_focused() { Color::Cyan } else { Color::Gray }));
+                .border_style(Style::default().fg(if state.is_preview_focused() {
+                    Color::Cyan
+                } else {
+                    Color::Gray
+                }));
 
             let paragraph = Paragraph::new(vec![Line::from(vec![Span::styled(
                 "No agent selected",
@@ -272,11 +280,13 @@ impl PanePreviewWidget {
 
             let mut styled_lines: Vec<Line> = Vec::new();
 
-            // Take enough lines to fill the area
+            // Take lines based on scroll offset (0 = bottom/latest, higher = scrolled up)
             let content_lines: Vec<&str> = agent.last_content.lines().collect();
-            let start = content_lines.len().saturating_sub(available_lines);
+            let scroll = state.preview_scroll as usize;
+            let end = content_lines.len().saturating_sub(scroll);
+            let start = end.saturating_sub(available_lines);
 
-            for line in &content_lines[start..] {
+            for line in &content_lines[start..end] {
                 let spans = if line.starts_with('+') && !line.starts_with("+++") {
                     vec![Span::styled(*line, Style::default().fg(Color::Green))]
                 } else if line.starts_with('-') && !line.starts_with("---") {
@@ -307,11 +317,17 @@ impl PanePreviewWidget {
             )
         };
 
+        let border_color = if state.is_preview_focused() {
+            Color::Cyan
+        } else {
+            Color::Gray
+        };
+
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Gray));
+            .border_style(Style::default().fg(border_color));
 
         let paragraph = Paragraph::new(lines)
             .block(block)

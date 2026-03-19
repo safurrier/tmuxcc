@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use ratatui::{
     layout::Rect,
@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::agents::{AgentStatus, AgentType, ApprovalType, MonitoredAgent, SubagentStatus};
-use crate::app::{AppState, NonAgentPane, TreeCursor};
+use crate::app::{generate_flash_labels, AppState, FlashTarget, NavItem, NonAgentPane, TreeCursor};
 
 /// Widget for displaying agents in a tree organized by session/window
 pub struct AgentTreeWidget;
@@ -99,6 +99,36 @@ impl AgentTreeWidget {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(border_color));
+
+        // Build flash label lookup maps
+        let flash_style = Style::default()
+            .fg(Color::Magenta)
+            .bg(Color::Rgb(50, 0, 50))
+            .add_modifier(Modifier::BOLD);
+        let (session_flash, agent_flash, nap_flash) = if state.flash_mode.is_some() {
+            let targets = state.build_flash_targets();
+            let labels = generate_flash_labels(targets.len());
+            let mut sf: HashMap<String, String> = HashMap::new();
+            let mut af: HashMap<usize, String> = HashMap::new();
+            let mut nf: HashMap<usize, String> = HashMap::new();
+            for (target, label) in targets.iter().zip(labels.iter()) {
+                match target {
+                    FlashTarget::Nav(NavItem::Session(s)) => {
+                        sf.insert(s.clone(), label.clone());
+                    }
+                    FlashTarget::Nav(NavItem::Agent(idx)) => {
+                        af.insert(*idx, label.clone());
+                    }
+                    FlashTarget::Nav(NavItem::NonAgentPane(idx)) => {
+                        nf.insert(*idx, label.clone());
+                    }
+                    FlashTarget::InputArea => {}
+                }
+            }
+            (sf, af, nf)
+        } else {
+            (HashMap::new(), HashMap::new(), HashMap::new())
+        };
 
         let tree = SessionWindowTree::new(agents, non_agent_panes, &state.all_sessions);
 
@@ -194,8 +224,13 @@ impl AgentTreeWidget {
                     ));
                 }
 
+                let arrow_span = if let Some(label) = session_flash.get(*session) {
+                    Span::styled(format!("{:<2}", label), flash_style)
+                } else {
+                    Span::styled("\u{25b6} ", Style::default().fg(Color::Cyan))
+                };
                 let mut spans = vec![
-                    Span::styled("\u{25b6} ", Style::default().fg(Color::Cyan)),
+                    arrow_span,
                     Span::styled(
                         *session,
                         Style::default()
@@ -218,8 +253,13 @@ impl AgentTreeWidget {
                 items.push(ListItem::new(Line::from(spans)).style(session_style));
             } else {
                 // Expanded view
+                let arrow_span = if let Some(label) = session_flash.get(*session) {
+                    Span::styled(format!("{:<2}", label), flash_style)
+                } else {
+                    Span::styled("\u{25bc} ", Style::default().fg(Color::Cyan))
+                };
                 let mut session_spans = vec![
-                    Span::styled("\u{25bc} ", Style::default().fg(Color::Cyan)),
+                    arrow_span,
                     Span::styled(
                         *session,
                         Style::default()
@@ -243,7 +283,11 @@ impl AgentTreeWidget {
                     windows.iter().enumerate()
                 {
                     let is_last_window = window_idx == windows.len() - 1;
-                    let window_prefix = if is_last_window { "\u{2514}\u{2500}" } else { "\u{251c}\u{2500}" };
+                    let window_prefix = if is_last_window {
+                        "\u{2514}\u{2500}"
+                    } else {
+                        "\u{251c}\u{2500}"
+                    };
 
                     // Window header
                     let window_line = Line::from(vec![
@@ -266,7 +310,11 @@ impl AgentTreeWidget {
                                 let is_cursor = state.cursor == TreeCursor::Agent(*original_idx);
                                 let is_selected = state.is_multi_selected(*original_idx);
 
-                                let cont_prefix = if is_last_window { "    " } else { " \u{2502}  " };
+                                let cont_prefix = if is_last_window {
+                                    "    "
+                                } else {
+                                    " \u{2502}  "
+                                };
 
                                 let tree_prefix = if is_last_window {
                                     if is_last_item && agent.subagents.is_empty() {
@@ -280,15 +328,25 @@ impl AgentTreeWidget {
                                     " \u{2502}  \u{251c}\u{2500}"
                                 };
 
-                                let select_indicator = if is_selected && is_cursor {
-                                    "\u{2503}\u{2611}"
-                                } else if is_selected {
-                                    " \u{2611}"
-                                } else if is_cursor {
-                                    "\u{2503} "
-                                } else {
-                                    "  "
-                                };
+                                let (select_indicator, select_indicator_style) =
+                                    if let Some(label) = agent_flash.get(original_idx) {
+                                        (format!("{:<2}", label), flash_style)
+                                    } else if is_selected && is_cursor {
+                                        (
+                                            "\u{2503}\u{2611}".to_string(),
+                                            if is_selected {
+                                                Style::default().fg(Color::Cyan)
+                                            } else {
+                                                Style::default().fg(Color::White)
+                                            },
+                                        )
+                                    } else if is_selected {
+                                        (" \u{2611}".to_string(), Style::default().fg(Color::Cyan))
+                                    } else if is_cursor {
+                                        ("\u{2503} ".to_string(), Style::default().fg(Color::White))
+                                    } else {
+                                        ("  ".to_string(), Style::default().fg(Color::White))
+                                    };
 
                                 // Status indicator and text
                                 let (status_char, status_text, status_style) = match &agent.status {
@@ -303,14 +361,18 @@ impl AgentTreeWidget {
                                     AgentStatus::AwaitingApproval { .. } => (
                                         "\u{26a0}",
                                         "Waiting",
-                                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                        Style::default()
+                                            .fg(Color::Red)
+                                            .add_modifier(Modifier::BOLD),
                                     ),
                                     AgentStatus::Error { .. } => {
                                         ("\u{2717}", "Error", Style::default().fg(Color::Red))
                                     }
-                                    AgentStatus::Unknown => {
-                                        ("\u{25cb}", "Unknown", Style::default().fg(Color::DarkGray))
-                                    }
+                                    AgentStatus::Unknown => (
+                                        "\u{25cb}",
+                                        "Unknown",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                 };
 
                                 let type_style = match agent.agent_type {
@@ -335,14 +397,7 @@ impl AgentTreeWidget {
 
                                 // Main line: status + path
                                 let line = Line::from(vec![
-                                    Span::styled(
-                                        select_indicator,
-                                        if is_selected {
-                                            Style::default().fg(Color::Cyan)
-                                        } else {
-                                            Style::default().fg(Color::White)
-                                        },
-                                    ),
+                                    Span::styled(select_indicator, select_indicator_style),
                                     Span::styled(tree_prefix, Style::default().fg(Color::DarkGray)),
                                     Span::styled(status_char, status_style),
                                     Span::raw(" "),
@@ -361,14 +416,23 @@ impl AgentTreeWidget {
                                         Style::default().fg(Color::DarkGray),
                                     ),
                                     Span::styled(agent.agent_type.short_name(), type_style),
-                                    Span::styled(" \u{2502} ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(
+                                        " \u{2502} ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                     Span::styled(status_text, status_style),
-                                    Span::styled(" \u{2502} ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(
+                                        " \u{2502} ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                     Span::styled(
                                         format!("pid:{}", agent.pid),
                                         Style::default().fg(Color::DarkGray),
                                     ),
-                                    Span::styled(" \u{2502} ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(
+                                        " \u{2502} ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
                                     Span::styled(
                                         agent.uptime_str(),
                                         Style::default().fg(Color::DarkGray),
@@ -441,10 +505,13 @@ impl AgentTreeWidget {
                                                     Style::default().fg(Color::White),
                                                 ),
                                             ]);
-                                            items.push(ListItem::new(detail_line).style(item_style));
+                                            items
+                                                .push(ListItem::new(detail_line).style(item_style));
                                         }
 
-                                        if let ApprovalType::UserQuestion { choices, .. } = approval_type {
+                                        if let ApprovalType::UserQuestion { choices, .. } =
+                                            approval_type
+                                        {
                                             for (i, choice) in choices.iter().take(4).enumerate() {
                                                 let choice_text = truncate_str(
                                                     choice,
@@ -465,7 +532,9 @@ impl AgentTreeWidget {
                                                         Style::default().fg(Color::White),
                                                     ),
                                                 ]);
-                                                items.push(ListItem::new(choice_line).style(item_style));
+                                                items.push(
+                                                    ListItem::new(choice_line).style(item_style),
+                                                );
                                             }
                                             if choices.len() > 4 {
                                                 let more_line = Line::from(vec![
@@ -475,11 +544,16 @@ impl AgentTreeWidget {
                                                         Style::default().fg(Color::DarkGray),
                                                     ),
                                                     Span::styled(
-                                                        format!("     ...+{} more", choices.len() - 4),
+                                                        format!(
+                                                            "     ...+{} more",
+                                                            choices.len() - 4
+                                                        ),
                                                         Style::default().fg(Color::DarkGray),
                                                     ),
                                                 ]);
-                                                items.push(ListItem::new(more_line).style(item_style));
+                                                items.push(
+                                                    ListItem::new(more_line).style(item_style),
+                                                );
                                             }
                                         }
                                     }
@@ -504,7 +578,9 @@ impl AgentTreeWidget {
                                                     Style::default().fg(Color::Yellow),
                                                 ),
                                             ]);
-                                            items.push(ListItem::new(activity_line).style(item_style));
+                                            items.push(
+                                                ListItem::new(activity_line).style(item_style),
+                                            );
                                         }
                                     }
                                     AgentStatus::Error { message } => {
@@ -522,7 +598,10 @@ impl AgentTreeWidget {
                                                 "\u{2717} ",
                                                 Style::default().fg(Color::Red),
                                             ),
-                                            Span::styled(error_text, Style::default().fg(Color::Red)),
+                                            Span::styled(
+                                                error_text,
+                                                Style::default().fg(Color::Red),
+                                            ),
                                         ]);
                                         items.push(ListItem::new(error_line).style(item_style));
                                     }
@@ -539,9 +618,10 @@ impl AgentTreeWidget {
                                     };
 
                                     let (sub_char, sub_style) = match subagent.status {
-                                        SubagentStatus::Running => {
-                                            (state.spinner_frame(), Style::default().fg(Color::Cyan))
-                                        }
+                                        SubagentStatus::Running => (
+                                            state.spinner_frame(),
+                                            Style::default().fg(Color::Cyan),
+                                        ),
                                         SubagentStatus::Completed => {
                                             ("\u{2713}", Style::default().fg(Color::Green))
                                         }
@@ -616,11 +696,14 @@ impl AgentTreeWidget {
                                     " \u{2502}  \u{251c}\u{2500}"
                                 };
 
-                                let cursor_indicator = if is_cursor {
-                                    "\u{2503} "
-                                } else {
-                                    "  "
-                                };
+                                let (cursor_indicator, cursor_indicator_style) =
+                                    if let Some(label) = nap_flash.get(nap_idx) {
+                                        (format!("{:<2}", label), flash_style)
+                                    } else if is_cursor {
+                                        ("\u{2503} ".to_string(), Style::default().fg(Color::White))
+                                    } else {
+                                        ("  ".to_string(), Style::default().fg(Color::White))
+                                    };
 
                                 let item_style = if is_cursor {
                                     Style::default().bg(Color::Rgb(50, 50, 70))
@@ -633,10 +716,7 @@ impl AgentTreeWidget {
                                 }
 
                                 let line = Line::from(vec![
-                                    Span::styled(
-                                        cursor_indicator,
-                                        Style::default().fg(Color::White),
-                                    ),
+                                    Span::styled(cursor_indicator, cursor_indicator_style),
                                     Span::styled(tree_prefix, Style::default().fg(Color::DarkGray)),
                                     Span::styled("\u{25cb} ", Style::default().fg(Color::DarkGray)),
                                     Span::styled(

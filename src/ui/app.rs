@@ -14,7 +14,9 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use crate::app::{Action, AppState, Config, TreeCursor};
+use crate::app::{
+    generate_flash_labels, Action, AppState, Config, FlashMode, FlashTarget, TreeCursor,
+};
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;
@@ -447,11 +449,10 @@ async fn run_loop(
                                 state.cursor_end();
                             }
                             Action::SendInput => {
-                                let input = state.take_input();
-                                if !input.is_empty() {
-                                    if let Some(agent) = state.selected_agent() {
-                                        let target = agent.target.clone();
-                                        // Send the input text
+                                let target = state.selected_agent().map(|a| a.target.clone());
+                                if let Some(target) = target {
+                                    let input = state.take_input();
+                                    if !input.is_empty() {
                                         if let Err(e) = tmux_client.send_keys(&target, &input) {
                                             state.set_error(format!("Failed to send input: {}", e));
                                         } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {
@@ -484,6 +485,8 @@ async fn run_loop(
                             Action::ScrollUp => {
                                 if state.show_help {
                                     state.help_scroll = state.help_scroll.saturating_sub(1);
+                                } else if state.is_preview_focused() {
+                                    state.preview_scroll = state.preview_scroll.saturating_sub(1);
                                 } else {
                                     state.select_prev();
                                 }
@@ -491,6 +494,8 @@ async fn run_loop(
                             Action::ScrollDown => {
                                 if state.show_help {
                                     state.help_scroll = state.help_scroll.saturating_add(1);
+                                } else if state.is_preview_focused() {
+                                    state.preview_scroll = state.preview_scroll.saturating_add(1);
                                 } else {
                                     state.select_next();
                                 }
@@ -572,6 +577,72 @@ async fn run_loop(
                                 state.rename_mode = None;
                                 state.take_input();
                             }
+                            Action::FlashFocusStart => {
+                                state.flash_mode = Some(FlashMode::Focus);
+                                state.flash_prefix = None;
+                            }
+                            Action::FlashGoStart => {
+                                state.flash_mode = Some(FlashMode::Go);
+                                state.flash_prefix = None;
+                            }
+                            Action::FlashCancel => {
+                                state.flash_mode = None;
+                                state.flash_prefix = None;
+                            }
+                            Action::FlashInput(c) => {
+                                let targets = state.build_flash_targets();
+                                let labels = generate_flash_labels(targets.len());
+                                let is_go = matches!(state.flash_mode, Some(FlashMode::Go));
+
+                                let resolved_idx = if let Some(prefix) = state.flash_prefix {
+                                    // Two-char resolution
+                                    let full_label = format!("{}{}", prefix, c);
+                                    labels.iter().position(|l| *l == full_label)
+                                } else {
+                                    // Single-char check
+                                    let c_str = c.to_string();
+                                    if let Some(idx) = labels.iter().position(|l| *l == c_str) {
+                                        Some(idx)
+                                    } else if labels.iter().any(|l| l.starts_with(c)) {
+                                        // Start of a two-char label
+                                        state.flash_prefix = Some(c);
+                                        None
+                                    } else {
+                                        // Invalid key, cancel
+                                        state.flash_mode = None;
+                                        state.flash_prefix = None;
+                                        None
+                                    }
+                                };
+
+                                if let Some(idx) = resolved_idx {
+                                    if let Some(target) = targets.get(idx) {
+                                        state.jump_to_flash_target(target);
+                                        let should_focus_pane = is_go
+                                            && !matches!(target, FlashTarget::InputArea);
+                                        state.flash_mode = None;
+                                        state.flash_prefix = None;
+                                        if should_focus_pane {
+                                            if let Some(pane_target) = state.selected_pane_target()
+                                            {
+                                                if let Err(e) =
+                                                    tmux_client.focus_pane(&pane_target)
+                                                {
+                                                    state.set_error(format!(
+                                                        "Failed to focus: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        state.flash_mode = None;
+                                        state.flash_prefix = None;
+                                    }
+                                } else if state.flash_prefix.is_none() {
+                                    // Already cancelled above
+                                }
+                            }
                             Action::None => {}
                         }
                     }
@@ -593,8 +664,10 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         return match code {
             KeyCode::Char('j') | KeyCode::Down => Action::ScrollDown,
             KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp,
-            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('h') => Action::HideHelp,
-            _ => Action::None,  // ignore other keys while help is open
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('h') => {
+                Action::HideHelp
+            }
+            _ => Action::None, // ignore other keys while help is open
         };
     }
 
@@ -612,6 +685,15 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             KeyCode::Home => Action::CursorHome,
             KeyCode::End => Action::CursorEnd,
             KeyCode::Char(c) => Action::InputChar(c),
+            _ => Action::None,
+        };
+    }
+
+    // If flash mode is active, handle flash keys
+    if state.flash_mode.is_some() {
+        return match code {
+            KeyCode::Esc => Action::FlashCancel,
+            KeyCode::Char(c) => Action::FlashInput(c),
             _ => Action::None,
         };
     }
@@ -704,6 +786,10 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         // Focus pane with 'f'
         KeyCode::Char('f') | KeyCode::Char('F') => Action::FocusPane,
+
+        // Flash navigation
+        KeyCode::Char('g') => Action::FlashFocusStart,
+        KeyCode::Char('G') => Action::FlashGoStart,
 
         // Kill pane with 'dd' (double-tap)
         KeyCode::Char('d') => {

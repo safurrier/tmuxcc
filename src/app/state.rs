@@ -52,6 +52,53 @@ pub enum NavItem {
     NonAgentPane(usize),
 }
 
+/// Flash navigation mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashMode {
+    /// Flash-focus: jump cursor to target
+    Focus,
+    /// Flash-go: jump cursor + attach tmux
+    Go,
+}
+
+/// Target for flash navigation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlashTarget {
+    /// A navigable tree item
+    Nav(NavItem),
+    /// The input area
+    InputArea,
+}
+
+/// Home-row priority keys for flash labels
+const FLASH_KEYS: &[char] = &[
+    'a', 's', 'd', 'f', 'j', 'k', 'l', 'h', 'e', 'w', 'r', 'u', 'i', 'o',
+];
+
+/// Prefix keys for two-char flash labels
+const FLASH_PREFIXES: &[char] = &[';', ',', '.'];
+
+/// Generate flash labels for a given number of targets
+pub fn generate_flash_labels(count: usize) -> Vec<String> {
+    let mut labels = Vec::with_capacity(count);
+    // Single-char labels first
+    for &c in FLASH_KEYS.iter().take(count.min(FLASH_KEYS.len())) {
+        labels.push(c.to_string());
+    }
+    // Two-char labels with prefix keys for overflow
+    if count > FLASH_KEYS.len() {
+        'outer: for &prefix in FLASH_PREFIXES.iter() {
+            for &c in FLASH_KEYS.iter() {
+                if labels.len() >= count {
+                    break 'outer;
+                }
+                labels.push(format!("{}{}", prefix, c));
+            }
+        }
+    }
+    labels
+}
+
 /// Tree structure containing all monitored agents
 #[derive(Debug, Clone, Default)]
 pub struct AgentTree {
@@ -161,6 +208,12 @@ pub struct AppState {
     pub spawn_mode: Option<String>,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
+    /// Preview scroll offset
+    pub preview_scroll: u16,
+    /// Flash navigation mode
+    pub flash_mode: Option<FlashMode>,
+    /// First character of a two-char flash label (waiting for second char)
+    pub flash_prefix: Option<char>,
 }
 
 impl AppState {
@@ -188,6 +241,9 @@ impl AppState {
             pending_kill: None,
             spawn_mode: None,
             rename_mode: None,
+            preview_scroll: 0,
+            flash_mode: None,
+            flash_prefix: None,
         }
     }
 
@@ -198,19 +254,13 @@ impl AppState {
         // Group agents by session
         let mut agent_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (idx, agent) in self.agents.root_agents.iter().enumerate() {
-            agent_sessions
-                .entry(&agent.session)
-                .or_default()
-                .push(idx);
+            agent_sessions.entry(&agent.session).or_default().push(idx);
         }
 
         // Group non-agent panes by session
         let mut nap_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (idx, nap) in self.agents.non_agent_panes.iter().enumerate() {
-            nap_sessions
-                .entry(&nap.session)
-                .or_default()
-                .push(idx);
+            nap_sessions.entry(&nap.session).or_default().push(idx);
         }
 
         // Collect all session names (from agents, non-agent panes, and all_sessions)
@@ -226,7 +276,7 @@ impl AppState {
         }
 
         let mut items = Vec::new();
-        for (session, _) in &all_session_names {
+        for session in all_session_names.keys() {
             items.push(NavItem::Session(session.to_string()));
             if !self.collapsed_sessions.contains(*session) {
                 if let Some(agent_indices) = agent_sessions.get(session) {
@@ -282,9 +332,11 @@ impl AppState {
     pub fn selected_pane_target(&self) -> Option<String> {
         match &self.cursor {
             TreeCursor::Agent(idx) => self.agents.get_agent(*idx).map(|a| a.target.clone()),
-            TreeCursor::NonAgentPane(idx) => {
-                self.agents.non_agent_panes.get(*idx).map(|p| p.target.clone())
-            }
+            TreeCursor::NonAgentPane(idx) => self
+                .agents
+                .non_agent_panes
+                .get(*idx)
+                .map(|p| p.target.clone()),
             TreeCursor::Session(_) => None,
         }
     }
@@ -292,12 +344,12 @@ impl AppState {
     /// Returns the window name of whatever pane the cursor is on
     pub fn selected_pane_window_name(&self) -> Option<String> {
         match &self.cursor {
-            TreeCursor::Agent(idx) => {
-                self.agents.get_agent(*idx).map(|a| a.window_name.clone())
-            }
-            TreeCursor::NonAgentPane(idx) => {
-                self.agents.non_agent_panes.get(*idx).map(|p| p.window_name.clone())
-            }
+            TreeCursor::Agent(idx) => self.agents.get_agent(*idx).map(|a| a.window_name.clone()),
+            TreeCursor::NonAgentPane(idx) => self
+                .agents
+                .non_agent_panes
+                .get(*idx)
+                .map(|p| p.window_name.clone()),
             TreeCursor::Session(_) => None,
         }
     }
@@ -306,10 +358,7 @@ impl AppState {
     pub fn selected_session(&self) -> Option<&str> {
         match &self.cursor {
             TreeCursor::Session(s) => Some(s),
-            TreeCursor::Agent(idx) => self
-                .agents
-                .get_agent(*idx)
-                .map(|a| a.session.as_str()),
+            TreeCursor::Agent(idx) => self.agents.get_agent(*idx).map(|a| a.session.as_str()),
             TreeCursor::NonAgentPane(idx) => self
                 .agents
                 .non_agent_panes
@@ -481,27 +530,50 @@ impl AppState {
 
     /// Find the current cursor's position in the nav items list
     fn find_nav_position(&self, nav_items: &[NavItem]) -> Option<usize> {
-        nav_items.iter().position(|item| match (&self.cursor, item) {
-            (TreeCursor::Session(s1), NavItem::Session(s2)) => s1 == s2,
-            (TreeCursor::Agent(i1), NavItem::Agent(i2)) => i1 == i2,
-            (TreeCursor::NonAgentPane(i1), NavItem::NonAgentPane(i2)) => i1 == i2,
-            _ => false,
-        })
+        nav_items
+            .iter()
+            .position(|item| match (&self.cursor, item) {
+                (TreeCursor::Session(s1), NavItem::Session(s2)) => s1 == s2,
+                (TreeCursor::Agent(i1), NavItem::Agent(i2)) => i1 == i2,
+                (TreeCursor::NonAgentPane(i1), NavItem::NonAgentPane(i2)) => i1 == i2,
+                _ => false,
+            })
     }
 
     /// Set cursor from a NavItem
-    fn set_cursor_from_nav(&mut self, item: &NavItem) {
+    pub fn set_cursor_from_nav(&mut self, item: &NavItem) {
         self.cursor = match item {
             NavItem::Session(s) => TreeCursor::Session(s.clone()),
             NavItem::Agent(idx) => TreeCursor::Agent(*idx),
             NavItem::NonAgentPane(idx) => TreeCursor::NonAgentPane(*idx),
         };
+        self.preview_scroll = 0;
+    }
+
+    /// Build the list of flash targets (nav items + input area)
+    pub fn build_flash_targets(&self) -> Vec<FlashTarget> {
+        let mut targets: Vec<FlashTarget> = self
+            .build_nav_items()
+            .into_iter()
+            .map(FlashTarget::Nav)
+            .collect();
+        targets.push(FlashTarget::InputArea);
+        targets
+    }
+
+    /// Jump cursor to a flash target
+    pub fn jump_to_flash_target(&mut self, target: &FlashTarget) {
+        match target {
+            FlashTarget::Nav(item) => self.set_cursor_from_nav(item),
+            FlashTarget::InputArea => self.focus_input(),
+        }
     }
 
     /// Selects an agent by index
     pub fn select_agent(&mut self, index: usize) {
         if index < self.agents.root_agents.len() {
             self.cursor = TreeCursor::Agent(index);
+            self.preview_scroll = 0;
         }
     }
 
@@ -607,8 +679,7 @@ impl AppState {
                     if self.agents.root_agents.is_empty() {
                         self.cursor = TreeCursor::Agent(0);
                     } else {
-                        self.cursor =
-                            TreeCursor::Agent(self.agents.root_agents.len() - 1);
+                        self.cursor = TreeCursor::Agent(self.agents.root_agents.len() - 1);
                     }
                 }
             }
