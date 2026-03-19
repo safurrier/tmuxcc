@@ -485,6 +485,8 @@ async fn run_loop(
                             Action::ScrollUp => {
                                 if state.show_help {
                                     state.help_scroll = state.help_scroll.saturating_sub(1);
+                                } else if state.is_preview_focused() {
+                                    state.preview_scroll = state.preview_scroll.saturating_sub(1);
                                 } else {
                                     state.select_prev();
                                 }
@@ -492,6 +494,8 @@ async fn run_loop(
                             Action::ScrollDown => {
                                 if state.show_help {
                                     state.help_scroll = state.help_scroll.saturating_add(1);
+                                } else if state.is_preview_focused() {
+                                    state.preview_scroll = state.preview_scroll.saturating_add(1);
                                 } else {
                                     state.select_next();
                                 }

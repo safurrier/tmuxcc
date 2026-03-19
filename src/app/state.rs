@@ -208,6 +208,8 @@ pub struct AppState {
     pub spawn_mode: Option<String>,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
+    /// Preview scroll offset
+    pub preview_scroll: u16,
     /// Flash navigation mode
     pub flash_mode: Option<FlashMode>,
     /// First character of a two-char flash label (waiting for second char)
@@ -239,6 +241,7 @@ impl AppState {
             pending_kill: None,
             spawn_mode: None,
             rename_mode: None,
+            preview_scroll: 0,
             flash_mode: None,
             flash_prefix: None,
         }
@@ -544,6 +547,7 @@ impl AppState {
             NavItem::Agent(idx) => TreeCursor::Agent(*idx),
             NavItem::NonAgentPane(idx) => TreeCursor::NonAgentPane(*idx),
         };
+        self.preview_scroll = 0;
     }
 
     /// Build the list of flash targets (nav items + input area)
@@ -569,6 +573,7 @@ impl AppState {
     pub fn select_agent(&mut self, index: usize) {
         if index < self.agents.root_agents.len() {
             self.cursor = TreeCursor::Agent(index);
+            self.preview_scroll = 0;
         }
     }
 
