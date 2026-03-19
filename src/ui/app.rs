@@ -447,11 +447,10 @@ async fn run_loop(
                                 state.cursor_end();
                             }
                             Action::SendInput => {
-                                let input = state.take_input();
-                                if !input.is_empty() {
-                                    if let Some(agent) = state.selected_agent() {
-                                        let target = agent.target.clone();
-                                        // Send the input text
+                                let target = state.selected_agent().map(|a| a.target.clone());
+                                if let Some(target) = target {
+                                    let input = state.take_input();
+                                    if !input.is_empty() {
                                         if let Err(e) = tmux_client.send_keys(&target, &input) {
                                             state.set_error(format!("Failed to send input: {}", e));
                                         } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {

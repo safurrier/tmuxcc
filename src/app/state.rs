@@ -75,18 +75,25 @@ const FLASH_KEYS: &[char] = &[
     'a', 's', 'd', 'f', 'j', 'k', 'l', 'h', 'e', 'w', 'r', 'u', 'i', 'o',
 ];
 
+/// Prefix keys for two-char flash labels
+const FLASH_PREFIXES: &[char] = &[';', ',', '.'];
+
 /// Generate flash labels for a given number of targets
 pub fn generate_flash_labels(count: usize) -> Vec<String> {
     let mut labels = Vec::with_capacity(count);
+    // Single-char labels first
     for &c in FLASH_KEYS.iter().take(count.min(FLASH_KEYS.len())) {
         labels.push(c.to_string());
     }
+    // Two-char labels with prefix keys for overflow
     if count > FLASH_KEYS.len() {
-        for &c in FLASH_KEYS.iter() {
-            if labels.len() >= count {
-                break;
+        'outer: for &prefix in FLASH_PREFIXES.iter() {
+            for &c in FLASH_KEYS.iter() {
+                if labels.len() >= count {
+                    break 'outer;
+                }
+                labels.push(format!("{}{}", prefix, c));
             }
-            labels.push(format!(";{}", c));
         }
     }
     labels
