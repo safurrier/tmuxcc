@@ -209,6 +209,8 @@ pub struct AppState {
     pub spawn_mode: Option<String>,
     /// Whether to hide sessions that have no agents
     pub hide_non_agent_sessions: bool,
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    pub popup_mode: bool,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
     /// Preview scroll offset
@@ -251,6 +253,7 @@ impl AppState {
             spawn_mode: None,
             rename_mode: None,
             hide_non_agent_sessions: true,
+            popup_mode: false,
             preview_scroll: 0,
             flash_mode: None,
             flash_prefix: None,

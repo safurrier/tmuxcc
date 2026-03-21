@@ -24,6 +24,10 @@ pub struct Config {
     /// Whether PR monitoring is enabled
     #[serde(default = "default_pr_enabled")]
     pub pr_enabled: bool,
+
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    #[serde(skip)]
+    pub popup: bool,
 }
 
 fn default_poll_interval() -> u64 {
@@ -59,6 +63,7 @@ impl Default for Config {
             agent_patterns: Vec::new(),
             pr_poll_interval_ms: default_pr_poll_interval(),
             pr_enabled: default_pr_enabled(),
+            popup: false,
         }
     }
 }

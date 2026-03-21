@@ -29,6 +29,10 @@ struct Cli {
     #[arg(short, long)]
     debug: bool,
 
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    #[arg(long)]
+    popup: bool,
+
     /// 設定ファイルのパスを表示
     #[arg(long)]
     show_config_path: bool,
@@ -91,6 +95,7 @@ async fn main() -> Result<()> {
     // CLI args override config file
     config.poll_interval_ms = cli.poll_interval;
     config.capture_lines = cli.capture_lines;
+    config.popup = cli.popup;
 
     // Run the application
     run_app(config).await

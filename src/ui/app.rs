@@ -38,6 +38,7 @@ pub async fn run_app(config: Config) -> Result<()> {
 
     // Initialize state
     let mut state = AppState::new();
+    state.popup_mode = config.popup;
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -433,6 +434,8 @@ async fn run_loop(
                                 if let Some(target) = state.selected_pane_target() {
                                     if let Err(e) = tmux_client.focus_pane(&target) {
                                         state.set_error(format!("Failed to focus: {}", e));
+                                    } else if state.popup_mode {
+                                        state.should_quit = true;
                                     }
                                 }
                             }
@@ -702,6 +705,8 @@ async fn run_loop(
                                                         "Failed to focus: {}",
                                                         e
                                                     ));
+                                                } else if state.popup_mode {
+                                                    state.should_quit = true;
                                                 }
                                             }
                                         }
