@@ -126,26 +126,76 @@ impl TmuxClient {
         Ok(())
     }
 
-    /// Switches the current client to a different session
+    /// Switches the current client to a different session.
+    /// When running inside a tmux popup, targets the parent client instead.
     pub fn switch_client(&self, target: &str) -> Result<()> {
         // Extract session name from target (e.g. "discord:2.1" -> "discord")
         let session = target.split(':').next().unwrap_or(target);
 
-        let output = Command::new("tmux")
-            .args(["switch-client", "-t", session])
-            .output()
-            .context("Failed to execute tmux switch-client")?;
+        // Detect if we're in a popup by finding a parent client to target.
+        // Inside a popup, there are multiple clients — we want the non-popup one.
+        if let Some(parent_client) = self.find_parent_client() {
+            let output = Command::new("tmux")
+                .args(["switch-client", "-c", &parent_client, "-t", session])
+                .output()
+                .context("Failed to execute tmux switch-client")?;
 
-        if !output.status.success() {
-            // switch-client fails if not running inside tmux — fall back silently
-            tracing::debug!(
-                "switch-client to {} failed (may not be inside tmux): {}",
-                session,
-                String::from_utf8_lossy(&output.stderr)
-            );
+            if !output.status.success() {
+                tracing::debug!(
+                    "switch-client -c {} to {} failed: {}",
+                    parent_client,
+                    session,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        } else {
+            let output = Command::new("tmux")
+                .args(["switch-client", "-t", session])
+                .output()
+                .context("Failed to execute tmux switch-client")?;
+
+            if !output.status.success() {
+                tracing::debug!(
+                    "switch-client to {} failed (may not be inside tmux): {}",
+                    session,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
         }
 
         Ok(())
+    }
+
+    /// Find the parent (non-popup) client name.
+    /// Returns Some(client_name) if we detect we're in a popup with a parent client.
+    fn find_parent_client(&self) -> Option<String> {
+        // Get our own client tty
+        let own_client = Command::new("tmux")
+            .args(["display-message", "-p", "#{client_tty}"])
+            .output()
+            .ok()?;
+        let own_tty = String::from_utf8_lossy(&own_client.stdout)
+            .trim()
+            .to_string();
+
+        // List all clients
+        let output = Command::new("tmux")
+            .args(["list-clients", "-F", "#{client_tty}"])
+            .output()
+            .ok()?;
+        let clients: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // If there's only one client, we're not in a popup
+        if clients.len() <= 1 {
+            return None;
+        }
+
+        // Return the first client that isn't us (the parent)
+        clients.into_iter().find(|c| c != &own_tty)
     }
 
     /// Focuses on a pane by switching to its session, selecting window and pane
