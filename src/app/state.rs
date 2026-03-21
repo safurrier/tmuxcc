@@ -1,6 +1,7 @@
 use crate::agents::MonitoredAgent;
+use crate::git::types::PrLookupResult;
 use crate::monitor::SystemStats;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// A pane that is not running a recognized agent
@@ -214,6 +215,12 @@ pub struct AppState {
     pub flash_mode: Option<FlashMode>,
     /// First character of a two-char flash label (waiting for second char)
     pub flash_prefix: Option<char>,
+    /// PR info per agent working directory path
+    pub pr_info: HashMap<String, PrLookupResult>,
+    /// Whether PR detail panel is shown
+    pub show_pr_panel: bool,
+    /// Paths for which the PR panel has been auto-opened
+    pr_auto_opened: HashSet<String>,
 }
 
 impl AppState {
@@ -231,7 +238,7 @@ impl AppState {
             show_help: false,
             help_scroll: 0,
             show_subagent_log: false,
-            show_summary_detail: true,
+            show_summary_detail: false,
             should_quit: false,
             last_error: None,
             sidebar_width: 35,
@@ -244,6 +251,9 @@ impl AppState {
             preview_scroll: 0,
             flash_mode: None,
             flash_prefix: None,
+            pr_info: HashMap::new(),
+            show_pr_panel: false,
+            pr_auto_opened: HashSet::new(),
         }
     }
 
@@ -661,6 +671,38 @@ impl AppState {
         self.show_summary_detail = !self.show_summary_detail;
     }
 
+    /// Toggles PR detail panel display
+    pub fn toggle_pr_panel(&mut self) {
+        self.show_pr_panel = !self.show_pr_panel;
+    }
+
+    /// Get PR lookup result for the currently selected agent
+    pub fn selected_agent_pr(&self) -> Option<&PrLookupResult> {
+        self.selected_agent()
+            .and_then(|a| self.pr_info.get(&a.path))
+    }
+
+    /// Get PrInfo if the selected agent has an open PR
+    pub fn selected_pr(&self) -> Option<&crate::git::types::PrInfo> {
+        match self.selected_agent_pr() {
+            Some(PrLookupResult::Found(info)) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Handle auto-open logic when PR data arrives
+    pub fn handle_pr_auto_open(&mut self) {
+        if let Some(agent) = self.selected_agent() {
+            let path = agent.path.clone();
+            if let Some(PrLookupResult::Found(_)) = self.pr_info.get(&path) {
+                if !self.pr_auto_opened.contains(&path) {
+                    self.show_pr_panel = true;
+                    self.pr_auto_opened.insert(path);
+                }
+            }
+        }
+    }
+
     /// Sets an error message
     pub fn set_error(&mut self, message: String) {
         self.last_error = Some(message);
@@ -794,6 +836,136 @@ mod tests {
         assert_eq!(state.selected_session(), Some("dev"));
         assert_eq!(state.selected_agent_index(), Some(0));
         assert!(state.selected_agent().is_some());
+    }
+
+    #[test]
+    fn test_toggle_pr_panel() {
+        let mut state = AppState::new();
+        assert!(!state.show_pr_panel);
+        state.toggle_pr_panel();
+        assert!(state.show_pr_panel);
+        state.toggle_pr_panel();
+        assert!(!state.show_pr_panel);
+    }
+
+    #[test]
+    fn test_selected_agent_pr_found() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state.cursor = TreeCursor::Agent(0);
+
+        let pr = crate::git::types::PrInfo {
+            number: 42,
+            title: "Test PR".to_string(),
+            state: "OPEN".to_string(),
+            url: "https://github.com/test/42".to_string(),
+            head_ref: "feature".to_string(),
+            base_ref: "main".to_string(),
+            is_draft: false,
+            review_decision: crate::git::types::ReviewDecision::Approved,
+            mergeable: crate::git::types::MergeableState::Mergeable,
+            checks: vec![],
+            total_comments: 0,
+            additions: 10,
+            deletions: 5,
+        };
+        state
+            .pr_info
+            .insert("/home/user/project".to_string(), PrLookupResult::Found(pr));
+
+        assert!(state.selected_pr().is_some());
+        assert_eq!(state.selected_pr().unwrap().number, 42);
+    }
+
+    #[test]
+    fn test_selected_agent_pr_none() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state.cursor = TreeCursor::Agent(0);
+        assert!(state.selected_pr().is_none());
+    }
+
+    #[test]
+    fn test_pr_auto_open() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state.cursor = TreeCursor::Agent(0);
+
+        let pr = crate::git::types::PrInfo {
+            number: 1,
+            title: "t".to_string(),
+            state: "OPEN".to_string(),
+            url: "u".to_string(),
+            head_ref: "h".to_string(),
+            base_ref: "b".to_string(),
+            is_draft: false,
+            review_decision: crate::git::types::ReviewDecision::Unknown,
+            mergeable: crate::git::types::MergeableState::Unknown,
+            checks: vec![],
+            total_comments: 0,
+            additions: 0,
+            deletions: 0,
+        };
+
+        // First detection auto-opens
+        state.pr_info.insert(
+            "/home/user/project".to_string(),
+            PrLookupResult::Found(pr.clone()),
+        );
+        state.handle_pr_auto_open();
+        assert!(state.show_pr_panel);
+
+        // User closes, second detection does NOT reopen
+        state.show_pr_panel = false;
+        state.handle_pr_auto_open();
+        assert!(!state.show_pr_panel);
+    }
+
+    #[test]
+    fn test_multiple_agents_same_path() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.1", 0, 1));
+
+        let pr = crate::git::types::PrInfo {
+            number: 99,
+            title: "shared".to_string(),
+            state: "OPEN".to_string(),
+            url: "u".to_string(),
+            head_ref: "h".to_string(),
+            base_ref: "b".to_string(),
+            is_draft: false,
+            review_decision: crate::git::types::ReviewDecision::Unknown,
+            mergeable: crate::git::types::MergeableState::Unknown,
+            checks: vec![],
+            total_comments: 0,
+            additions: 0,
+            deletions: 0,
+        };
+        state
+            .pr_info
+            .insert("/home/user/project".to_string(), PrLookupResult::Found(pr));
+
+        // Both agents at same path see the PR
+        state.cursor = TreeCursor::Agent(0);
+        assert_eq!(state.selected_pr().unwrap().number, 99);
+        state.cursor = TreeCursor::Agent(1);
+        assert_eq!(state.selected_pr().unwrap().number, 99);
     }
 
     #[test]

@@ -16,6 +16,14 @@ pub struct Config {
     /// Custom agent patterns (command -> agent type mapping)
     #[serde(default)]
     pub agent_patterns: Vec<AgentPattern>,
+
+    /// PR polling interval in milliseconds (default 30s)
+    #[serde(default = "default_pr_poll_interval")]
+    pub pr_poll_interval_ms: u64,
+
+    /// Whether PR monitoring is enabled
+    #[serde(default = "default_pr_enabled")]
+    pub pr_enabled: bool,
 }
 
 fn default_poll_interval() -> u64 {
@@ -24,6 +32,14 @@ fn default_poll_interval() -> u64 {
 
 fn default_capture_lines() -> u32 {
     100
+}
+
+fn default_pr_poll_interval() -> u64 {
+    30_000
+}
+
+fn default_pr_enabled() -> bool {
+    true
 }
 
 /// Pattern for detecting agent types
@@ -41,6 +57,8 @@ impl Default for Config {
             poll_interval_ms: default_poll_interval(),
             capture_lines: default_capture_lines(),
             agent_patterns: Vec::new(),
+            pr_poll_interval_ms: default_pr_poll_interval(),
+            pr_enabled: default_pr_enabled(),
         }
     }
 }
@@ -107,5 +125,31 @@ mod tests {
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(config.poll_interval_ms, parsed.poll_interval_ms);
+    }
+
+    #[test]
+    fn test_config_pr_defaults() {
+        let config = Config::default();
+        assert_eq!(config.pr_poll_interval_ms, 30_000);
+        assert!(config.pr_enabled);
+    }
+
+    #[test]
+    fn test_config_pr_roundtrip() {
+        let mut config = Config::default();
+        config.pr_poll_interval_ms = 60_000;
+        config.pr_enabled = false;
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.pr_poll_interval_ms, 60_000);
+        assert!(!parsed.pr_enabled);
+    }
+
+    #[test]
+    fn test_config_missing_pr_fields_uses_defaults() {
+        let toml_str = r#"poll_interval_ms = 500"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.pr_poll_interval_ms, 30_000);
+        assert!(parsed.pr_enabled);
     }
 }

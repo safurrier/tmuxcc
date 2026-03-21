@@ -10,6 +10,7 @@ use ratatui::{
 
 use crate::agents::{AgentStatus, AgentType, ApprovalType, MonitoredAgent, SubagentStatus};
 use crate::app::{generate_flash_labels, AppState, FlashTarget, NavItem, NonAgentPane, TreeCursor};
+use crate::git::types::PrLookupResult;
 
 /// Widget for displaying agents in a tree organized by session/window
 pub struct AgentTreeWidget;
@@ -456,6 +457,26 @@ impl AgentTreeWidget {
                                         context_bar(ctx),
                                         Style::default().fg(bar_color),
                                     ));
+                                }
+
+                                // PR badge + CI dots
+                                if let Some(PrLookupResult::Found(pr)) =
+                                    state.pr_info.get(&agent.path)
+                                {
+                                    info_parts.push(Span::styled(
+                                        " \u{2502} ",
+                                        Style::default().fg(Color::DarkGray),
+                                    ));
+                                    info_parts.push(Span::styled(
+                                        format!("PR#{}", pr.number),
+                                        Style::default().fg(Color::Rgb(255, 158, 100)),
+                                    ));
+                                    for check in &pr.checks {
+                                        info_parts.push(Span::styled(
+                                            "\u{25cf}",
+                                            Style::default().fg(check.status.dot_color()),
+                                        ));
+                                    }
                                 }
 
                                 items.push(ListItem::new(Line::from(info_parts)).style(item_style));

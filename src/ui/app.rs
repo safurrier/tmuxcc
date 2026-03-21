@@ -23,7 +23,7 @@ use crate::tmux::TmuxClient;
 
 use super::components::{
     AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, InputWidget, PanePreviewWidget,
-    SubagentLogWidget,
+    PrDetailWidget, PrStatusBarWidget, SubagentLogWidget,
 };
 use super::Layout;
 
@@ -65,11 +65,27 @@ pub async fn run_app(config: Config) -> Result<()> {
     // Create system stats collector
     let mut system_stats = SystemStatsCollector::new();
 
+    // Create PR monitor task
+    let (pr_tx, mut pr_rx) = mpsc::channel(16);
+    let (paths_tx, paths_rx) = tokio::sync::watch::channel(Vec::new());
+    let pr_monitor_handle = if config.pr_enabled {
+        let pr_monitor = crate::git::monitor::PrMonitorTask::new(
+            pr_tx,
+            Duration::from_millis(config.pr_poll_interval_ms),
+            paths_rx,
+        );
+        Some(tokio::spawn(async move { pr_monitor.run().await }))
+    } else {
+        None
+    };
+
     // Main loop
     let result = run_loop(
         &mut terminal,
         &mut state,
         &mut rx,
+        &mut pr_rx,
+        &paths_tx,
         &tmux_client,
         &mut system_stats,
     )
@@ -77,6 +93,9 @@ pub async fn run_app(config: Config) -> Result<()> {
 
     // Cleanup
     monitor_handle.abort();
+    if let Some(h) = pr_monitor_handle {
+        h.abort();
+    }
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -92,6 +111,8 @@ async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
     rx: &mut mpsc::Receiver<crate::monitor::MonitorUpdate>,
+    pr_rx: &mut mpsc::Receiver<crate::git::monitor::PrMonitorUpdate>,
+    paths_tx: &tokio::sync::watch::Sender<Vec<String>>,
     tmux_client: &TmuxClient,
     system_stats: &mut SystemStatsCollector,
 ) -> Result<()> {
@@ -134,16 +155,29 @@ async fn run_loop(
                 InputWidget::render(frame, preview_chunks[2], state);
                 SubagentLogWidget::render(frame, subagent_log, state);
             } else {
-                // Normal: sidebar | summary+preview+input
-                let (left, summary, preview, input_area) = Layout::content_layout_with_input(
-                    main_chunks[1],
-                    state.sidebar_width,
-                    input_height,
-                    state.show_summary_detail,
-                );
+                // Normal: sidebar | summary+pr_status+pr_detail+preview+input
+                let pr_status_h = PrStatusBarWidget::height(state);
+                let pr_detail_h = if state.show_pr_panel && state.selected_pr().is_some() {
+                    PrDetailWidget::height()
+                } else {
+                    0
+                };
+                let (left, summary, pr_status, pr_detail, preview, input_area) =
+                    Layout::content_layout_with_input(
+                        main_chunks[1],
+                        state.sidebar_width,
+                        input_height,
+                        state.show_summary_detail,
+                        pr_status_h,
+                        pr_detail_h,
+                    );
                 AgentTreeWidget::render(frame, left, state);
                 if state.show_summary_detail {
                     PanePreviewWidget::render_summary(frame, summary, state);
+                }
+                PrStatusBarWidget::render(frame, pr_status, state);
+                if pr_detail_h > 0 {
+                    PrDetailWidget::render(frame, pr_detail, state);
                 }
                 PanePreviewWidget::render_detailed(frame, preview, state);
                 InputWidget::render(frame, input_area, state);
@@ -171,6 +205,18 @@ async fn run_loop(
                 // Clean up invalid selections
                 let max_idx = state.agents.root_agents.len();
                 state.selected_agents.retain(|&idx| idx < max_idx);
+
+                // Push current agent paths to PR monitor
+                let agent_paths: Vec<String> = state.agents.root_agents.iter()
+                    .map(|a| a.path.clone())
+                    .collect();
+                let _ = paths_tx.send(agent_paths);
+            }
+
+            // Handle PR monitor updates
+            Some(pr_update) = pr_rx.recv() => {
+                state.pr_info = pr_update.results;
+                state.handle_pr_auto_open();
             }
 
             // Handle keyboard and mouse events
@@ -185,8 +231,10 @@ async fn run_loop(
                         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                         let main_chunks = Layout::main_layout(area);
                         let footer_area = main_chunks[2];
-                        let (sidebar, _, _, input_area) = Layout::content_layout_with_input(
-                            main_chunks[1], state.sidebar_width, 3, state.show_summary_detail
+                        let (sidebar, _, _, _, _, input_area) = Layout::content_layout_with_input(
+                            main_chunks[1], state.sidebar_width, 3, state.show_summary_detail,
+                            PrStatusBarWidget::height(state),
+                            if state.show_pr_panel && state.selected_pr().is_some() { PrDetailWidget::height() } else { 0 },
                         );
 
                         match mouse.kind {
@@ -402,6 +450,25 @@ async fn run_loop(
                             }
                             Action::ToggleSummaryDetail => {
                                 state.toggle_summary_detail();
+                            }
+                            Action::TogglePrPanel => {
+                                state.toggle_pr_panel();
+                            }
+                            Action::OpenPrUrl => {
+                                if let Some(pr) = state.selected_pr() {
+                                    let url = pr.url.clone();
+                                    if let Err(e) = crate::git::open_url(&url) {
+                                        state.set_error(format!("Failed to open PR: {}", e));
+                                    }
+                                }
+                            }
+                            Action::CopyPrUrl => {
+                                if let Some(pr) = state.selected_pr() {
+                                    let url = pr.url.clone();
+                                    if let Err(e) = crate::git::copy_to_clipboard(&url) {
+                                        state.set_error(format!("Failed to copy: {}", e));
+                                    }
+                                }
                             }
                             Action::Refresh => {
                                 state.clear_error();
@@ -815,6 +882,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
+        KeyCode::Char('p') => Action::TogglePrPanel,
+        KeyCode::Char('o') => Action::OpenPrUrl,
+        KeyCode::Char('c') => Action::CopyPrUrl,
         KeyCode::Char('r') => Action::Refresh,
         KeyCode::Char('R') => {
             // Rename when on a pane

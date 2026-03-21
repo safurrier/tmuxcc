@@ -29,14 +29,16 @@ impl Layout {
         (chunks[0], chunks[1])
     }
 
-    /// Splits the content area with summary, preview, and input
-    /// Returns (sidebar, summary, preview, input)
+    /// Splits the content area with summary, PR status, PR detail, preview, and input
+    /// Returns (sidebar, summary, pr_status_bar, pr_detail, preview, input)
     pub fn content_layout_with_input(
         area: Rect,
         sidebar_width: u16,
         input_height: u16,
         show_summary: bool,
-    ) -> (Rect, Rect, Rect, Rect) {
+        pr_status_height: u16,
+        pr_detail_height: u16,
+    ) -> (Rect, Rect, Rect, Rect, Rect, Rect) {
         let columns = ratatui::layout::Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -50,13 +52,22 @@ impl Layout {
         let right_side = ratatui::layout::Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(summary_height), // Summary (TODO + activity) - 2 columns
-                Constraint::Min(5),                 // Preview (pane content)
+                Constraint::Length(summary_height),   // Summary (TODO + activity)
+                Constraint::Length(pr_status_height), // PR status bar (0 or 1)
+                Constraint::Length(pr_detail_height), // PR detail panel (0 or 10)
+                Constraint::Min(5),                   // Preview (pane content)
                 Constraint::Length(input_height + 2), // Input area (+ border)
             ])
             .split(columns[1]);
 
-        (columns[0], right_side[0], right_side[1], right_side[2])
+        (
+            columns[0],
+            right_side[0],
+            right_side[1],
+            right_side[2],
+            right_side[3],
+            right_side[4],
+        )
     }
 
     /// Splits the content area with subagent log (2 columns, right side split vertically)
