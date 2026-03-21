@@ -99,6 +99,12 @@ pub enum Action {
     FlashInput(char),
     /// Cancel flash mode
     FlashCancel,
+    /// Toggle PR detail panel
+    TogglePrPanel,
+    /// Open PR URL in browser
+    OpenPrUrl,
+    /// Copy PR URL to clipboard
+    CopyPrUrl,
     /// No action (used for unbound keys)
     None,
 }
@@ -156,6 +162,9 @@ impl Action {
             Action::FlashGoStart => "Flash-go navigation",
             Action::FlashInput(_) => "Flash label input",
             Action::FlashCancel => "Cancel flash",
+            Action::TogglePrPanel => "Toggle PR detail panel",
+            Action::OpenPrUrl => "Open PR in browser",
+            Action::CopyPrUrl => "Copy PR URL to clipboard",
             Action::None => "",
         }
     }

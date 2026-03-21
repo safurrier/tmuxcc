@@ -239,6 +239,19 @@ impl FooterWidget {
                 Span::styled(" Q ", btn_def),
             ];
 
+            // PR buttons when a PR is detected
+            if state.selected_pr().is_some() {
+                let btn_pr = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(255, 158, 100));
+                spans.push(Span::styled(" ", sep));
+                spans.push(Span::styled(" p ", btn_pr));
+                spans.push(Span::styled(" ", sep));
+                spans.push(Span::styled(" o ", btn_def));
+                spans.push(Span::styled(" ", sep));
+                spans.push(Span::styled(" c ", btn_def));
+            }
+
             if !state.selected_agents.is_empty() {
                 spans.push(Span::styled(
                     format!(" ({}sel)", state.selected_agents.len()),

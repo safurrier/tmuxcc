@@ -43,6 +43,7 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 - **Context Awareness**: View remaining context percentage when available
 - **Pane Preview**: See live content from selected agent's tmux pane
 - **Focus Integration**: Jump directly to any agent's pane in tmux
+- **GitHub PR Integration**: See PR status, CI pipeline dots, review state, and merge readiness inline (requires `gh` CLI)
 - **Customizable**: Configure polling interval, capture lines, and custom agent patterns
 
 ### Supported AI Agents
@@ -77,6 +78,7 @@ cargo install --path .
 
 - **tmux** (must be running with at least one session)
 - **Rust** 1.70+ (for building from source)
+- **gh** (optional, for PR integration — [GitHub CLI](https://cli.github.com/))
 
 ---
 
@@ -164,7 +166,11 @@ tmuxcc --init-config
 
 | Key | Action |
 |-----|--------|
+| `t` | Toggle TODO/Activity summary panel |
 | `s` / `S` | Toggle subagent log |
+| `p` | Toggle PR detail panel |
+| `o` | Open PR in browser |
+| `c` | Copy PR URL to clipboard |
 | `r` | Refresh agent list |
 | `h` / `?` | Show help |
 | `q` | Quit |
@@ -201,6 +207,10 @@ poll_interval_ms = 500
 
 # Number of lines to capture from each pane
 capture_lines = 100
+
+# GitHub PR integration (requires `gh` CLI)
+pr_enabled = true            # Set to false to disable PR monitoring
+pr_poll_interval_ms = 30000  # How often to poll `gh pr view` (default: 30s)
 
 # Custom agent patterns (optional)
 # Add patterns to detect additional AI agents
@@ -248,6 +258,10 @@ tmuxcc/
 │   │   ├── state.rs      # AppState, AgentTree, InputMode
 │   │   ├── actions.rs    # Action enum
 │   │   └── config.rs     # Configuration
+│   ├── git/              # GitHub PR integration
+│   │   ├── types.rs      # PrInfo, CiCheck, CiStatus, ReviewDecision
+│   │   ├── gh_client.rs  # GhClient wrapping `gh pr view`
+│   │   └── monitor.rs    # PrMonitorTask (background polling)
 │   ├── monitor/          # Monitoring
 │   │   └── task.rs       # Async monitoring task
 │   ├── parsers/          # Agent output parsers
