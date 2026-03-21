@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
 
@@ -19,6 +19,9 @@ pub struct PrMonitorTask {
     poll_interval: Duration,
     paths_rx: watch::Receiver<Vec<String>>,
 }
+
+/// Rate limit backoff duration (5 minutes)
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(300);
 
 impl PrMonitorTask {
     pub fn new(
@@ -42,7 +45,6 @@ impl PrMonitorTask {
 
         if !gh_available {
             tracing::warn!("gh CLI not available — PR monitoring disabled");
-            // Send a single update indicating gh is unavailable, then stop
             let _ = self
                 .tx
                 .send(PrMonitorUpdate {
@@ -55,18 +57,53 @@ impl PrMonitorTask {
         // Immediate first poll
         self.poll_and_send().await;
 
-        // Clone the receiver so we can use changed() in select
         let mut paths_rx = self.paths_rx.clone();
+        let mut last_poll = Instant::now();
+        let mut last_paths: Vec<String> = self.paths_rx.borrow().clone();
+        let mut rate_limited_until: Option<Instant> = None;
 
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.poll_interval) => {
-                    self.poll_and_send().await;
+                    // Skip if rate limited
+                    if let Some(until) = rate_limited_until {
+                        if Instant::now() < until {
+                            continue;
+                        }
+                        rate_limited_until = None;
+                    }
+                    let rate_limited = self.poll_and_send().await;
+                    last_poll = Instant::now();
+                    last_paths = self.paths_rx.borrow().clone();
+                    if rate_limited {
+                        tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
+                        rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
+                    }
                 }
                 result = paths_rx.changed() => {
                     if result.is_ok() {
-                        // Paths changed — poll immediately
-                        self.poll_and_send().await;
+                        // Only re-poll if paths actually changed AND enough time has elapsed
+                        let new_paths = self.paths_rx.borrow().clone();
+                        let paths_changed = deduplicate_paths(&new_paths) != deduplicate_paths(&last_paths);
+                        let enough_time = last_poll.elapsed() >= self.poll_interval;
+
+                        if paths_changed && enough_time {
+                            if let Some(until) = rate_limited_until {
+                                if Instant::now() < until {
+                                    continue;
+                                }
+                                rate_limited_until = None;
+                            }
+                            let rate_limited = self.poll_and_send().await;
+                            last_poll = Instant::now();
+                            last_paths = new_paths;
+                            if rate_limited {
+                                tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
+                                rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
+                            }
+                        } else {
+                            last_paths = new_paths;
+                        }
                     }
                 }
                 _ = self.tx.closed() => {
@@ -76,7 +113,8 @@ impl PrMonitorTask {
         }
     }
 
-    async fn poll_and_send(&self) {
+    /// Poll all paths and send results. Returns true if rate limited.
+    async fn poll_and_send(&self) -> bool {
         let paths = self.paths_rx.borrow().clone();
         let unique_paths: Vec<String> = deduplicate_paths(&paths);
 
@@ -87,7 +125,7 @@ impl PrMonitorTask {
                     results: HashMap::new(),
                 })
                 .await;
-            return;
+            return false;
         }
 
         // Spawn blocking tasks for each unique path
@@ -100,15 +138,22 @@ impl PrMonitorTask {
             handles.push(handle);
         }
 
-        // Collect results
+        // Collect results and check for rate limiting
         let mut results = HashMap::new();
+        let mut hit_rate_limit = false;
         for handle in handles {
             if let Ok((path, result)) = handle.await {
+                if let PrLookupResult::Error(ref msg) = result {
+                    if msg.to_lowercase().contains("rate limit") {
+                        hit_rate_limit = true;
+                    }
+                }
                 results.insert(path, result);
             }
         }
 
         let _ = self.tx.send(PrMonitorUpdate { results }).await;
+        hit_rate_limit
     }
 }
 

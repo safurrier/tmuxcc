@@ -17,7 +17,7 @@ pub struct Config {
     #[serde(default)]
     pub agent_patterns: Vec<AgentPattern>,
 
-    /// PR polling interval in milliseconds (default 30s)
+    /// PR polling interval in milliseconds (default 60s)
     #[serde(default = "default_pr_poll_interval")]
     pub pr_poll_interval_ms: u64,
 
@@ -35,7 +35,7 @@ fn default_capture_lines() -> u32 {
 }
 
 fn default_pr_poll_interval() -> u64 {
-    30_000
+    60_000
 }
 
 fn default_pr_enabled() -> bool {
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn test_config_pr_defaults() {
         let config = Config::default();
-        assert_eq!(config.pr_poll_interval_ms, 30_000);
+        assert_eq!(config.pr_poll_interval_ms, 60_000);
         assert!(config.pr_enabled);
     }
 
@@ -149,7 +149,7 @@ mod tests {
     fn test_config_missing_pr_fields_uses_defaults() {
         let toml_str = r#"poll_interval_ms = 500"#;
         let parsed: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.pr_poll_interval_ms, 30_000);
+        assert_eq!(parsed.pr_poll_interval_ms, 60_000);
         assert!(parsed.pr_enabled);
     }
 }
