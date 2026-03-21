@@ -46,11 +46,7 @@ impl PrDetailWidget {
         let mut left_lines: Vec<Line> = Vec::new();
 
         // Title
-        let title_display = if pr.title.len() > 40 {
-            format!("{}…", &pr.title[..39])
-        } else {
-            pr.title.clone()
-        };
+        let title_display = truncate_str(&pr.title, 40);
         left_lines.push(Line::from(vec![
             Span::styled(
                 &title_display,
@@ -163,11 +159,7 @@ impl PrDetailWidget {
 
         // URL
         right_lines.push(Line::from(vec![Span::styled("", Style::default())]));
-        let url_display = if pr.url.len() > 45 {
-            format!("{}…", &pr.url[..44])
-        } else {
-            pr.url.clone()
-        };
+        let url_display = truncate_str(&pr.url, 45);
         right_lines.push(Line::from(vec![Span::styled(
             url_display,
             Style::default().fg(Color::DarkGray),
@@ -175,6 +167,16 @@ impl PrDetailWidget {
 
         let right_paragraph = Paragraph::new(right_lines).wrap(Wrap { trim: false });
         frame.render_widget(right_paragraph, columns[1]);
+    }
+}
+
+/// Truncate a string to `max_chars` on char boundaries, appending "…" if truncated.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars - 1).collect();
+        format!("{truncated}…")
     }
 }
 
@@ -301,5 +303,25 @@ mod tests {
             all_text.contains("approved"),
             "Expected review decision in rendered output"
         );
+    }
+
+    #[test]
+    fn test_truncate_str_with_multibyte_chars() {
+        // Should not panic on multibyte UTF-8
+        let result = super::truncate_str(
+            "日本語のテストタイトル長いタイトルですよこれはとても長い",
+            10,
+        );
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 10);
+
+        // Short string not truncated
+        let result2 = super::truncate_str("short", 10);
+        assert_eq!(result2, "short");
+
+        // ASCII truncation
+        let result3 = super::truncate_str("a]bcdefghijklmno", 10);
+        assert_eq!(result3.chars().count(), 10);
+        assert!(result3.ends_with('…'));
     }
 }

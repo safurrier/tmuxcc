@@ -55,10 +55,19 @@ impl PrMonitorTask {
         // Immediate first poll
         self.poll_and_send().await;
 
+        // Clone the receiver so we can use changed() in select
+        let mut paths_rx = self.paths_rx.clone();
+
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.poll_interval) => {
                     self.poll_and_send().await;
+                }
+                result = paths_rx.changed() => {
+                    if result.is_ok() {
+                        // Paths changed — poll immediately
+                        self.poll_and_send().await;
+                    }
                 }
                 _ = self.tx.closed() => {
                     break;

@@ -134,24 +134,48 @@ fn parse_status_checks(value: &serde_json::Value) -> Vec<CiCheck> {
 
     arr.iter()
         .filter_map(|item| {
-            let name = item["name"].as_str()?.to_string();
-            let status_str = item["status"].as_str().unwrap_or("");
-            let conclusion_str = item["conclusion"].as_str().unwrap_or("");
+            // Check runs have "name" + "status" + "conclusion"
+            if let Some(name) = item["name"].as_str() {
+                let status_str = item["status"].as_str().unwrap_or("");
+                let conclusion_str = item["conclusion"].as_str().unwrap_or("");
 
-            let status = match status_str {
-                "COMPLETED" => match conclusion_str {
+                let status = match status_str {
+                    "COMPLETED" => match conclusion_str {
+                        "SUCCESS" => CiStatus::Success,
+                        "FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE" | "ACTION_REQUIRED" => {
+                            CiStatus::Failure
+                        }
+                        "NEUTRAL" => CiStatus::Neutral,
+                        "SKIPPED" | "CANCELLED" | "STALE" => CiStatus::Skipped,
+                        _ => CiStatus::Neutral,
+                    },
+                    "IN_PROGRESS" => CiStatus::InProgress,
+                    "QUEUED" | "WAITING" | "PENDING" | "REQUESTED" => CiStatus::Pending,
+                    _ => CiStatus::Pending,
+                };
+
+                return Some(CiCheck {
+                    name: name.to_string(),
+                    status,
+                });
+            }
+
+            // StatusContext entries have "context" + "state" (no "name"/"status")
+            if let Some(context) = item["context"].as_str() {
+                let state_str = item["state"].as_str().unwrap_or("");
+                let status = match state_str {
                     "SUCCESS" => CiStatus::Success,
-                    "FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE" => CiStatus::Failure,
-                    "NEUTRAL" => CiStatus::Neutral,
-                    "SKIPPED" | "CANCELLED" => CiStatus::Skipped,
-                    _ => CiStatus::Neutral,
-                },
-                "IN_PROGRESS" => CiStatus::InProgress,
-                "QUEUED" | "WAITING" | "PENDING" | "REQUESTED" => CiStatus::Pending,
-                _ => CiStatus::Pending,
-            };
+                    "FAILURE" | "ERROR" => CiStatus::Failure,
+                    "PENDING" | "EXPECTED" => CiStatus::Pending,
+                    _ => CiStatus::Pending,
+                };
+                return Some(CiCheck {
+                    name: context.to_string(),
+                    status,
+                });
+            }
 
-            Some(CiCheck { name, status })
+            None
         })
         .collect()
 }
@@ -357,5 +381,60 @@ mod tests {
             "To get started with GitHub CLI, please run: gh auth login",
         );
         assert!(matches!(result, PrLookupResult::GhUnavailable));
+    }
+
+    #[test]
+    fn test_parse_status_context_entries() {
+        let json = r#"{
+            "number": 10,
+            "title": "test",
+            "state": "OPEN",
+            "url": "https://github.com/test/10",
+            "headRefName": "feat",
+            "baseRefName": "main",
+            "statusCheckRollup": [
+                {"context": "ci/circleci", "state": "SUCCESS"},
+                {"context": "deploy/staging", "state": "FAILURE"},
+                {"context": "license/cla", "state": "PENDING"}
+            ]
+        }"#;
+        let pr = match parse_pr_json(json) {
+            PrLookupResult::Found(pr) => pr,
+            _ => panic!("expected Found"),
+        };
+        assert_eq!(pr.checks.len(), 3);
+        assert_eq!(pr.checks[0].name, "ci/circleci");
+        assert_eq!(pr.checks[0].status, CiStatus::Success);
+        assert_eq!(pr.checks[1].name, "deploy/staging");
+        assert_eq!(pr.checks[1].status, CiStatus::Failure);
+        assert_eq!(pr.checks[2].name, "license/cla");
+        assert_eq!(pr.checks[2].status, CiStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_mixed_check_runs_and_status_contexts() {
+        let json = r#"{
+            "number": 11,
+            "title": "mixed",
+            "state": "OPEN",
+            "url": "https://github.com/test/11",
+            "headRefName": "feat",
+            "baseRefName": "main",
+            "statusCheckRollup": [
+                {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"context": "ci/external", "state": "FAILURE"},
+                {"name": "lint", "status": "COMPLETED", "conclusion": "ACTION_REQUIRED"},
+                {"name": "stale-check", "status": "COMPLETED", "conclusion": "STALE"}
+            ]
+        }"#;
+        let pr = match parse_pr_json(json) {
+            PrLookupResult::Found(pr) => pr,
+            _ => panic!("expected Found"),
+        };
+        assert_eq!(pr.checks.len(), 4);
+        assert_eq!(pr.checks[0].status, CiStatus::Success);
+        assert_eq!(pr.checks[1].status, CiStatus::Failure); // StatusContext
+        assert_eq!(pr.checks[2].status, CiStatus::Failure); // ACTION_REQUIRED
+        assert_eq!(pr.checks[3].status, CiStatus::Skipped); // STALE
     }
 }
