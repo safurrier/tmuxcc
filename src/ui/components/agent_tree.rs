@@ -150,15 +150,6 @@ impl AgentTreeWidget {
         let mut cursor_list_index: Option<usize> = None;
 
         for (session, windows) in tree.sessions.iter() {
-            let is_session_cursor = state.cursor == TreeCursor::Session(session.to_string());
-            let is_collapsed = state.collapsed_sessions.contains(*session);
-
-            let session_style = if is_session_cursor {
-                Style::default().bg(Color::Rgb(50, 50, 70))
-            } else {
-                Style::default()
-            };
-
             // Count agents and total panes for this session
             let mut agent_count = 0u32;
             let mut total_pane_count = 0u32;
@@ -170,6 +161,20 @@ impl AgentTreeWidget {
                     }
                 }
             }
+
+            // Skip sessions with no agents when hiding non-agent sessions
+            if state.hide_non_agent_sessions && agent_count == 0 {
+                continue;
+            }
+
+            let is_session_cursor = state.cursor == TreeCursor::Session(session.to_string());
+            let is_collapsed = state.collapsed_sessions.contains(*session);
+
+            let session_style = if is_session_cursor {
+                Style::default().bg(Color::Rgb(50, 50, 70))
+            } else {
+                Style::default()
+            };
 
             if is_collapsed {
                 // Collapsed view: single line with status counts

@@ -183,6 +183,12 @@ impl HelpWidget {
             blank(),
             Line::from(vec![Span::styled("  View toggles", desc_style)]),
             key(
+                "  H            ",
+                "Toggle non-agent sessions (hidden by default)",
+                key_style,
+                desc_style,
+            ),
+            key(
                 "  s / S        ",
                 "Toggle subagent log panel",
                 key_style,

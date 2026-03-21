@@ -207,6 +207,8 @@ pub struct AppState {
     pub pending_kill: Option<(String, Instant)>,
     /// Spawn mode: Some(session_name) when active
     pub spawn_mode: Option<String>,
+    /// Whether to hide sessions that have no agents
+    pub hide_non_agent_sessions: bool,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
     /// Preview scroll offset
@@ -248,6 +250,7 @@ impl AppState {
             pending_kill: None,
             spawn_mode: None,
             rename_mode: None,
+            hide_non_agent_sessions: true,
             preview_scroll: 0,
             flash_mode: None,
             flash_prefix: None,
@@ -287,6 +290,10 @@ impl AppState {
 
         let mut items = Vec::new();
         for session in all_session_names.keys() {
+            // Skip sessions with no agents when hide_non_agent_sessions is enabled
+            if self.hide_non_agent_sessions && !agent_sessions.contains_key(session) {
+                continue;
+            }
             items.push(NavItem::Session(session.to_string()));
             if !self.collapsed_sessions.contains(*session) {
                 if let Some(agent_indices) = agent_sessions.get(session) {

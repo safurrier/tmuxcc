@@ -445,6 +445,9 @@ async fn run_loop(
                             Action::ExpandAll => {
                                 state.expand_all();
                             }
+                            Action::ToggleHideNonAgentSessions => {
+                                state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
+                            }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
                             }
@@ -880,6 +883,7 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('[') => Action::CollapseAll,
         KeyCode::Char(']') => Action::ExpandAll,
 
+        KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
         KeyCode::Char('p') => Action::TogglePrPanel,

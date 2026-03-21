@@ -99,6 +99,8 @@ pub enum Action {
     FlashInput(char),
     /// Cancel flash mode
     FlashCancel,
+    /// Toggle hiding non-agent sessions
+    ToggleHideNonAgentSessions,
     /// Toggle PR detail panel
     TogglePrPanel,
     /// Open PR URL in browser
@@ -162,6 +164,7 @@ impl Action {
             Action::FlashGoStart => "Flash-go navigation",
             Action::FlashInput(_) => "Flash label input",
             Action::FlashCancel => "Cancel flash",
+            Action::ToggleHideNonAgentSessions => "Toggle non-agent sessions",
             Action::TogglePrPanel => "Toggle PR detail panel",
             Action::OpenPrUrl => "Open PR in browser",
             Action::CopyPrUrl => "Copy PR URL to clipboard",
