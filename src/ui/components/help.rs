@@ -195,6 +195,12 @@ impl HelpWidget {
                 desc_style,
             ),
             key(
+                "  p            ",
+                "Toggle PR detail panel (when PR detected)",
+                key_style,
+                desc_style,
+            ),
+            key(
                 "  <  /  >      ",
                 "Resize sidebar narrower / wider",
                 key_style,
@@ -203,6 +209,23 @@ impl HelpWidget {
             key(
                 "  r            ",
                 "Refresh agent list",
+                key_style,
+                desc_style,
+            ),
+            blank(),
+            Line::from(vec![Span::styled(
+                "  PR actions (when PR detected)",
+                desc_style,
+            )]),
+            key(
+                "  o            ",
+                "Open PR in browser",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  c            ",
+                "Copy PR URL to clipboard",
                 key_style,
                 desc_style,
             ),
