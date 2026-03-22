@@ -835,12 +835,12 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Right => Action::FocusInput,
         KeyCode::Left => Action::None, // Already on sidebar
 
-        // Enter toggles collapse when on a session header
+        // Enter: collapse on session headers, focus pane on agents/panes
         KeyCode::Enter => {
             if matches!(state.cursor, TreeCursor::Session(_)) {
                 Action::ToggleCollapse
             } else {
-                Action::None
+                Action::FocusPane
             }
         }
 
@@ -916,7 +916,7 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             } else if state.show_subagent_log {
                 Action::ToggleSubagentLog
             } else {
-                Action::None
+                Action::Quit
             }
         }
 
