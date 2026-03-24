@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ratatui::{
     layout::Rect,
@@ -131,6 +131,31 @@ impl AgentTreeWidget {
             (HashMap::new(), HashMap::new(), HashMap::new())
         };
 
+        // When search is active, build a set of visible items from the filtered nav list
+        let search_active = state.search_query.as_ref().is_some_and(|q| !q.is_empty());
+        let (visible_sessions, visible_agents, visible_naps) = if search_active {
+            let nav = state.build_nav_items();
+            let mut vs: HashSet<String> = HashSet::new();
+            let mut va: HashSet<usize> = HashSet::new();
+            let mut vn: HashSet<usize> = HashSet::new();
+            for item in &nav {
+                match item {
+                    NavItem::Session(s) => {
+                        vs.insert(s.clone());
+                    }
+                    NavItem::Agent(idx) => {
+                        va.insert(*idx);
+                    }
+                    NavItem::NonAgentPane(idx) => {
+                        vn.insert(*idx);
+                    }
+                }
+            }
+            (Some(vs), Some(va), Some(vn))
+        } else {
+            (None, None, None)
+        };
+
         let tree = SessionWindowTree::new(agents, non_agent_panes, &state.all_sessions);
 
         if tree.sessions.is_empty() {
@@ -167,6 +192,13 @@ impl AgentTreeWidget {
                 continue;
             }
 
+            // Skip sessions not in the search filter
+            if let Some(ref vs) = visible_sessions {
+                if !vs.contains(*session) {
+                    continue;
+                }
+            }
+
             let is_session_cursor = state.cursor == TreeCursor::Session(session.to_string());
             let is_collapsed = state.collapsed_sessions.contains(*session);
 
@@ -174,7 +206,7 @@ impl AgentTreeWidget {
             let session_style = if is_session_cursor {
                 Style::default().bg(Color::Rgb(50, 50, 70))
             } else if is_search_match {
-                Style::default().bg(Color::Rgb(40, 40, 20))
+                Style::default().bg(Color::Rgb(60, 55, 10))
             } else {
                 Style::default()
             };
@@ -288,12 +320,31 @@ impl AgentTreeWidget {
                 }
                 items.push(ListItem::new(session_line).style(session_style));
 
-                // Filter windows: skip those with no agents when hiding non-agent panes
+                // Filter windows: skip those with no visible items
                 let visible_windows: Vec<_> = windows
                     .iter()
-                    .filter(|(_, items)| {
-                        if state.hide_non_agent_panes {
-                            items.iter().any(|i| matches!(i, WindowItem::Agent(..)))
+                    .filter(|(_, window_items)| {
+                        // Hide windows with no agents when hiding non-agent panes
+                        if state.hide_non_agent_panes
+                            && !window_items
+                                .iter()
+                                .any(|i| matches!(i, WindowItem::Agent(..)))
+                        {
+                            return false;
+                        }
+                        // During search, hide windows with no visible items
+                        if search_active {
+                            window_items.iter().any(|item| match item {
+                                WindowItem::Agent(idx, _) => {
+                                    visible_agents.as_ref().map_or(true, |va| va.contains(idx))
+                                }
+                                WindowItem::NonAgent(idx, _) => {
+                                    if state.hide_non_agent_panes {
+                                        return false;
+                                    }
+                                    visible_naps.as_ref().map_or(true, |vn| vn.contains(idx))
+                                }
+                            })
                         } else {
                             true
                         }
@@ -328,6 +379,12 @@ impl AgentTreeWidget {
 
                         match window_item {
                             WindowItem::Agent(original_idx, agent) => {
+                                // Skip agents not in search filter
+                                if let Some(ref va) = visible_agents {
+                                    if !va.contains(original_idx) {
+                                        continue;
+                                    }
+                                }
                                 let is_cursor = state.cursor == TreeCursor::Agent(*original_idx);
                                 let is_selected = state.is_multi_selected(*original_idx);
 
@@ -411,7 +468,7 @@ impl AgentTreeWidget {
                                 } else if is_selected {
                                     Style::default().bg(Color::Rgb(35, 35, 50))
                                 } else if is_agent_search_match {
-                                    Style::default().bg(Color::Rgb(40, 40, 20))
+                                    Style::default().bg(Color::Rgb(60, 55, 10))
                                 } else {
                                     Style::default()
                                 };
@@ -731,6 +788,12 @@ impl AgentTreeWidget {
                                 if state.hide_non_agent_panes {
                                     continue;
                                 }
+                                // Skip non-agent panes not in search filter
+                                if let Some(ref vn) = visible_naps {
+                                    if !vn.contains(nap_idx) {
+                                        continue;
+                                    }
+                                }
                                 let is_cursor = state.cursor == TreeCursor::NonAgentPane(*nap_idx);
 
                                 let tree_prefix = if is_last_window {
@@ -759,7 +822,7 @@ impl AgentTreeWidget {
                                 let item_style = if is_cursor {
                                     Style::default().bg(Color::Rgb(50, 50, 70))
                                 } else if is_nap_search_match {
-                                    Style::default().bg(Color::Rgb(40, 40, 20))
+                                    Style::default().bg(Color::Rgb(60, 55, 10))
                                 } else {
                                     Style::default()
                                 };

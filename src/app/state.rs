@@ -300,26 +300,75 @@ impl AppState {
             all_session_names.insert(s.as_str(), ());
         }
 
+        // Check if search is active with a non-empty query
+        let search_filter = self
+            .search_query
+            .as_ref()
+            .filter(|q| !q.is_empty())
+            .map(|q| q.to_lowercase());
+
         let mut items = Vec::new();
         for session in all_session_names.keys() {
             // Skip sessions with no agents when hide_non_agent_sessions is enabled
             if self.hide_non_agent_sessions && !agent_sessions.contains_key(session) {
                 continue;
             }
-            items.push(NavItem::Session(session.to_string()));
+
+            // Collect child items for this session
+            let mut session_children = Vec::new();
             if !self.collapsed_sessions.contains(*session) {
                 if let Some(agent_indices) = agent_sessions.get(session) {
                     for &idx in agent_indices {
-                        items.push(NavItem::Agent(idx));
+                        session_children.push(NavItem::Agent(idx));
                     }
                 }
                 if !self.hide_non_agent_panes {
                     if let Some(nap_indices) = nap_sessions.get(session) {
                         for &idx in nap_indices {
-                            items.push(NavItem::NonAgentPane(idx));
+                            session_children.push(NavItem::NonAgentPane(idx));
                         }
                     }
                 }
+            }
+
+            if let Some(ref query) = search_filter {
+                // Filter mode: only show sessions with matching children or matching name
+                let session_matches = session.to_lowercase().contains(query);
+                let matching_children: Vec<NavItem> = session_children
+                    .into_iter()
+                    .filter(|item| {
+                        let text = self.nav_item_text(item).to_lowercase();
+                        text.contains(query)
+                    })
+                    .collect();
+
+                if session_matches || !matching_children.is_empty() {
+                    items.push(NavItem::Session(session.to_string()));
+                    if session_matches && matching_children.is_empty() {
+                        // Session name matches but no children match — show all children
+                        // (re-collect since we consumed them)
+                        if !self.collapsed_sessions.contains(*session) {
+                            if let Some(agent_indices) = agent_sessions.get(session) {
+                                for &idx in agent_indices {
+                                    items.push(NavItem::Agent(idx));
+                                }
+                            }
+                            if !self.hide_non_agent_panes {
+                                if let Some(nap_indices) = nap_sessions.get(session) {
+                                    for &idx in nap_indices {
+                                        items.push(NavItem::NonAgentPane(idx));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        items.extend(matching_children);
+                    }
+                }
+            } else {
+                // Normal mode: show everything
+                items.push(NavItem::Session(session.to_string()));
+                items.extend(session_children);
             }
         }
         items
