@@ -33,3 +33,7 @@ logs/
 
 # Debug files
 *.dSYM/
+
+# Claude Code / review loop artifacts
+.claude/
+reviews/

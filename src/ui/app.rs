@@ -792,7 +792,11 @@ async fn run_loop(
     Ok(())
 }
 
-fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -> Action {
+pub(crate) fn map_key_to_action(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    state: &AppState,
+) -> Action {
     // If help is shown, handle scroll or close
     if state.show_help {
         return match code {
@@ -1002,5 +1006,101 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         }
 
         _ => Action::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    #[test]
+    fn test_search_mode_tab_focuses_input() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Tab, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusInput);
+    }
+
+    #[test]
+    fn test_search_mode_right_focuses_input() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Right, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusInput);
+    }
+
+    #[test]
+    fn test_search_mode_backtab_focuses_preview() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::BackTab, KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::FocusPreview);
+    }
+
+    #[test]
+    fn test_search_mode_esc_cancels() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchCancel);
+    }
+
+    #[test]
+    fn test_search_mode_enter_confirms() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchConfirm);
+    }
+
+    #[test]
+    fn test_search_mode_up_down_navigate() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        assert_eq!(
+            map_key_to_action(KeyCode::Down, KeyModifiers::NONE, &state),
+            Action::SearchNext
+        );
+        assert_eq!(
+            map_key_to_action(KeyCode::Up, KeyModifiers::NONE, &state),
+            Action::SearchPrev
+        );
+    }
+
+    #[test]
+    fn test_sidebar_slash_starts_search() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('/'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchStart);
+    }
+
+    #[test]
+    fn test_sidebar_enter_on_agent_focuses() {
+        let mut state = AppState::new();
+        state.cursor = TreeCursor::Agent(0);
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusPane);
+    }
+
+    #[test]
+    fn test_sidebar_enter_on_session_collapses() {
+        let mut state = AppState::new();
+        state.cursor = TreeCursor::Session("test".to_string());
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::ToggleCollapse);
+    }
+
+    #[test]
+    fn test_sidebar_esc_quits_when_no_selection() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::Quit);
     }
 }

@@ -371,8 +371,28 @@ impl AgentTreeWidget {
                     ]);
                     items.push(ListItem::new(window_line));
 
+                    // Build filtered item indices for correct connector glyphs
+                    let visible_item_indices: Vec<usize> = window_items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, item)| match item {
+                            WindowItem::Agent(idx, _) => {
+                                visible_agents.as_ref().map_or(true, |va| va.contains(idx))
+                            }
+                            WindowItem::NonAgent(idx, _) => {
+                                if state.hide_non_agent_panes {
+                                    return false;
+                                }
+                                visible_naps.as_ref().map_or(true, |vn| vn.contains(idx))
+                            }
+                        })
+                        .map(|(i, _)| i)
+                        .collect();
+
                     for (item_idx, window_item) in window_items.iter().enumerate() {
-                        let is_last_item = item_idx == window_items.len() - 1;
+                        let is_last_item = visible_item_indices
+                            .last()
+                            .map_or(false, |&last| item_idx == last);
 
                         match window_item {
                             WindowItem::Agent(original_idx, agent) => {

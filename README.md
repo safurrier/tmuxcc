@@ -186,6 +186,19 @@ tail -f ~/.local/state/tmuxcc/latest.log
 
 ---
 
+## Contributing
+
+```bash
+cargo test --lib            # Run tests
+cargo fmt --all -- --check  # Check formatting
+cargo clippy -- -D warnings # Lint
+mise run check              # All of the above
+```
+
+See [AGENTS.md](AGENTS.md) for directory map, validation commands, and common pitfalls.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
