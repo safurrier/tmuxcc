@@ -285,10 +285,22 @@ impl AgentTreeWidget {
                 }
                 items.push(ListItem::new(session_line).style(session_style));
 
+                // Filter windows: skip those with no agents when hiding non-agent panes
+                let visible_windows: Vec<_> = windows
+                    .iter()
+                    .filter(|(_, items)| {
+                        if state.hide_non_agent_panes {
+                            items.iter().any(|i| matches!(i, WindowItem::Agent(..)))
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+
                 for (window_idx, ((window_num, window_name), window_items)) in
-                    windows.iter().enumerate()
+                    visible_windows.iter().enumerate()
                 {
-                    let is_last_window = window_idx == windows.len() - 1;
+                    let is_last_window = window_idx == visible_windows.len() - 1;
                     let window_prefix = if is_last_window {
                         "\u{2514}\u{2500}"
                     } else {
