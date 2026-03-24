@@ -1005,4 +1005,60 @@ mod tests {
         assert_eq!(nav[1], NavItem::Session("beta".to_string()));
         assert_eq!(nav[2], NavItem::Agent(1));
     }
+
+    #[test]
+    fn test_hide_non_agent_panes() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state.agents.non_agent_panes.push(NonAgentPane {
+            target: "main:1.0".to_string(),
+            session: "main".to_string(),
+            window: 1,
+            window_name: "nvim".to_string(),
+            pane: 0,
+            command: "nvim".to_string(),
+            path: "/home/user".to_string(),
+        });
+
+        // Default: non-agent panes hidden
+        assert!(state.hide_non_agent_panes);
+        let nav = state.build_nav_items();
+        // Should have Session + Agent, no NonAgentPane
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("main".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(0));
+
+        // Toggle to show non-agent panes
+        state.hide_non_agent_panes = false;
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 3);
+        assert_eq!(nav[2], NavItem::NonAgentPane(0));
+    }
+
+    #[test]
+    fn test_hide_non_agent_sessions() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("dev", "dev:0.0", 0, 0));
+        state.all_sessions = vec!["dev".to_string(), "scratch".to_string()];
+
+        // Default: non-agent sessions hidden
+        assert!(state.hide_non_agent_sessions);
+        let nav = state.build_nav_items();
+        // Should only show "dev" session (has agents), not "scratch"
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("dev".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(0));
+
+        // Toggle to show all sessions
+        state.hide_non_agent_sessions = false;
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 3); // dev session + agent + scratch session
+        assert!(nav.contains(&NavItem::Session("scratch".to_string())));
+    }
 }

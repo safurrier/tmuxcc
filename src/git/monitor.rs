@@ -82,14 +82,26 @@ impl PrMonitorTask {
                         rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
                     }
                 }
-                // Watch for path changes — reset interval to poll sooner
+                // Watch for path changes — poll immediately if paths actually changed
                 result = paths_rx.changed() => {
                     if result.is_ok() {
                         let new_paths = deduplicate_paths(&self.paths_rx.borrow());
                         if new_paths != last_paths {
-                            last_paths = new_paths;
-                            // Reset interval to poll sooner after a real path change
-                            interval.reset();
+                            last_paths.clone_from(&new_paths);
+                            // Poll immediately on real path changes (unless rate limited)
+                            if rate_limited_until.map_or(true, |until| Instant::now() >= until) {
+                                if rate_limited_until.is_some() {
+                                    rate_limited_until = None;
+                                }
+                                let rate_limited = self.poll_and_send().await;
+                                last_paths = deduplicate_paths(&self.paths_rx.borrow());
+                                if rate_limited {
+                                    tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
+                                    rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
+                                }
+                                // Reset interval so the next periodic poll is a full interval away
+                                interval.reset();
+                            }
                         }
                     }
                 }
