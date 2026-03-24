@@ -219,6 +219,8 @@ pub struct AppState {
     pub preview_scroll: u16,
     /// Search mode: active search query
     pub search_query: Option<String>,
+    /// Cursor position before search started (for restore on cancel)
+    pub pre_search_cursor: Option<TreeCursor>,
     /// Flash navigation mode
     pub flash_mode: Option<FlashMode>,
     /// First character of a two-char flash label (waiting for second char)
@@ -261,6 +263,7 @@ impl AppState {
             popup_mode: false,
             preview_scroll: 0,
             search_query: None,
+            pre_search_cursor: None,
             flash_mode: None,
             flash_prefix: None,
             pr_info: HashMap::new(),
@@ -1224,5 +1227,38 @@ mod tests {
 
         state.search_query = Some("myproject".to_string());
         assert!(state.matches_search(&NavItem::Session("MyProject".to_string())));
+    }
+
+    #[test]
+    fn test_search_cancel_restores_cursor() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Start on alpha agent
+        state.cursor = TreeCursor::Agent(0);
+        let original_cursor = state.cursor.clone();
+
+        // Simulate search start: save cursor
+        state.pre_search_cursor = Some(state.cursor.clone());
+        state.search_query = Some("beta".to_string());
+        state.apply_search();
+
+        // Cursor should have moved away from original
+        assert_ne!(state.cursor, original_cursor);
+
+        // Cancel search: cursor should restore
+        state.search_query = None;
+        if let Some(cursor) = state.pre_search_cursor.take() {
+            state.cursor = cursor;
+        }
+        assert_eq!(state.cursor, original_cursor);
     }
 }

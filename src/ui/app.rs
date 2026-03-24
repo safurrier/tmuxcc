@@ -456,6 +456,7 @@ async fn run_loop(
                                 state.expand_all();
                             }
                             Action::SearchStart => {
+                                state.pre_search_cursor = Some(state.cursor.clone());
                                 state.search_query = Some(String::new());
                             }
                             Action::SearchInput(c) => {
@@ -478,6 +479,7 @@ async fn run_loop(
                             }
                             Action::SearchConfirm => {
                                 state.search_query = None;
+                                state.pre_search_cursor = None;
                                 // Also focus the pane (same as Enter in sidebar)
                                 if let Some(target) = state.selected_pane_target() {
                                     if let Err(e) = tmux_client.focus_pane(&target) {
@@ -490,6 +492,9 @@ async fn run_loop(
                             }
                             Action::SearchCancel => {
                                 state.search_query = None;
+                                if let Some(cursor) = state.pre_search_cursor.take() {
+                                    state.cursor = cursor;
+                                }
                             }
                             Action::ToggleHideNonAgentSessions => {
                                 state.hide_non_agent_sessions = !state.hide_non_agent_sessions;

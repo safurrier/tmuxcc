@@ -25,7 +25,7 @@ struct Cli {
     #[arg(short = 'f', long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// デバッグログを tmuxcc.log に出力
+    /// Enable verbose debug logging (logs always written to ~/.local/state/tmuxcc/)
     #[arg(short, long)]
     debug: bool,
 
