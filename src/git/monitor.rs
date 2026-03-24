@@ -57,14 +57,17 @@ impl PrMonitorTask {
         // Immediate first poll
         self.poll_and_send().await;
 
-        let mut paths_rx = self.paths_rx.clone();
-        let mut last_poll = Instant::now();
-        let mut last_paths: Vec<String> = self.paths_rx.borrow().clone();
-        let mut rate_limited_until: Option<Instant> = None;
+        // Use interval instead of sleep so watch channel wakes don't starve the timer
+        let mut interval = tokio::time::interval(self.poll_interval);
+        interval.tick().await; // consume the immediate first tick
 
+        let mut paths_rx = self.paths_rx.clone();
+        let mut last_paths: Vec<String> = deduplicate_paths(&self.paths_rx.borrow());
+        let mut rate_limited_until: Option<Instant> = None;
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.poll_interval) => {
+                // Periodic polling — always fires on schedule
+                _ = interval.tick() => {
                     // Skip if rate limited
                     if let Some(until) = rate_limited_until {
                         if Instant::now() < until {
@@ -73,36 +76,20 @@ impl PrMonitorTask {
                         rate_limited_until = None;
                     }
                     let rate_limited = self.poll_and_send().await;
-                    last_poll = Instant::now();
-                    last_paths = self.paths_rx.borrow().clone();
+                    last_paths = deduplicate_paths(&self.paths_rx.borrow());
                     if rate_limited {
                         tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
                         rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
                     }
                 }
+                // Watch for path changes — reset interval to poll sooner
                 result = paths_rx.changed() => {
                     if result.is_ok() {
-                        // Only re-poll if paths actually changed AND enough time has elapsed
-                        let new_paths = self.paths_rx.borrow().clone();
-                        let paths_changed = deduplicate_paths(&new_paths) != deduplicate_paths(&last_paths);
-                        let enough_time = last_poll.elapsed() >= self.poll_interval;
-
-                        if paths_changed && enough_time {
-                            if let Some(until) = rate_limited_until {
-                                if Instant::now() < until {
-                                    continue;
-                                }
-                                rate_limited_until = None;
-                            }
-                            let rate_limited = self.poll_and_send().await;
-                            last_poll = Instant::now();
+                        let new_paths = deduplicate_paths(&self.paths_rx.borrow());
+                        if new_paths != last_paths {
                             last_paths = new_paths;
-                            if rate_limited {
-                                tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
-                                rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
-                            }
-                        } else {
-                            last_paths = new_paths;
+                            // Reset interval to poll sooner after a real path change
+                            interval.reset();
                         }
                     }
                 }
