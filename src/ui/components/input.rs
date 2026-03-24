@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -43,11 +43,7 @@ impl InputWidget {
             format!(" Input → {} ", target_name)
         };
 
-        let border_color = if is_focused {
-            Color::Green
-        } else {
-            Color::DarkGray
-        };
+        let (inp_border_type, inp_border_style) = super::panel_border(is_focused, Color::Green);
 
         let block = if let Some(ref label) = flash_label {
             Block::default()
@@ -63,14 +59,14 @@ impl InputWidget {
                     Span::raw(format!(" Input → {} ", target_name)),
                 ]))
                 .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(border_color))
+                .border_type(inp_border_type)
+                .border_style(inp_border_style)
         } else {
             Block::default()
-                .title(title)
+                .title(super::panel_title(&title, is_focused, Color::Green))
                 .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(border_color))
+                .border_type(inp_border_type)
+                .border_style(inp_border_style)
         };
 
         // Build content with cursor (only show cursor when focused)

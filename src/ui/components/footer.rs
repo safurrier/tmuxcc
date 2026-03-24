@@ -77,6 +77,32 @@ impl FooterWidget {
         let key = Style::default().fg(Color::Yellow);
         let txt = Style::default().fg(Color::White);
 
+        // Search mode footer
+        if let Some(ref query) = state.search_query {
+            let line = Line::from(vec![
+                Span::styled(
+                    " SEARCH ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("\u{2502}", sep),
+                Span::styled(format!(" /{}", query), Style::default().fg(Color::White)),
+                Span::styled("_", Style::default().fg(Color::DarkGray)),
+                Span::styled(" | ", sep),
+                Span::styled("Enter", key),
+                Span::styled(":Go ", txt),
+                Span::styled("\u{2191}\u{2193}", key),
+                Span::styled(":Prev/Next ", txt),
+                Span::styled("ESC", key),
+                Span::styled(":Cancel", txt),
+            ]);
+            let paragraph = Paragraph::new(line);
+            frame.render_widget(paragraph, area);
+            return;
+        }
+
         // Flash mode footer
         if let Some(ref mode) = state.flash_mode {
             let (mode_name, mode_bg) = match mode {

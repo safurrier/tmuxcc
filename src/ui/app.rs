@@ -37,7 +37,14 @@ pub async fn run_app(config: Config) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Initialize state
+    tracing::info!(
+        poll_ms = config.poll_interval_ms,
+        popup = config.popup,
+        pr_enabled = config.pr_enabled,
+        "starting tmuxcc"
+    );
     let mut state = AppState::new();
+    state.popup_mode = config.popup;
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -433,6 +440,9 @@ async fn run_loop(
                                 if let Some(target) = state.selected_pane_target() {
                                     if let Err(e) = tmux_client.focus_pane(&target) {
                                         state.set_error(format!("Failed to focus: {}", e));
+                                    } else if state.popup_mode {
+                                        tracing::info!("popup mode: quitting after focus");
+                                        state.should_quit = true;
                                     }
                                 }
                             }
@@ -444,6 +454,62 @@ async fn run_loop(
                             }
                             Action::ExpandAll => {
                                 state.expand_all();
+                            }
+                            Action::SearchStart => {
+                                state.pre_search_cursor = Some(state.cursor.clone());
+                                state.search_query = Some(String::new());
+                            }
+                            Action::SearchInput(c) => {
+                                if let Some(ref mut query) = state.search_query {
+                                    query.push(c);
+                                }
+                                state.apply_search();
+                            }
+                            Action::SearchBackspace => {
+                                if let Some(ref mut query) = state.search_query {
+                                    query.pop();
+                                }
+                                state.apply_search();
+                            }
+                            Action::SearchNext => {
+                                state.search_next();
+                            }
+                            Action::SearchPrev => {
+                                state.search_prev();
+                            }
+                            Action::SearchConfirm => {
+                                state.search_query = None;
+                                state.pre_search_cursor = None;
+                                // If on a session header, expand and move to first child
+                                if matches!(state.cursor, TreeCursor::Session(_)) {
+                                    if let Some(session) =
+                                        state.selected_session().map(|s| s.to_string())
+                                    {
+                                        state.collapsed_sessions.remove(&session);
+                                    }
+                                    state.select_next(); // move to first child
+                                } else if let Some(target) = state.selected_pane_target() {
+                                    if let Err(e) = tmux_client.focus_pane(&target) {
+                                        state.set_error(format!("Failed to focus: {}", e));
+                                    } else if state.popup_mode {
+                                        tracing::info!(
+                                            "popup mode: quitting after search confirm"
+                                        );
+                                        state.should_quit = true;
+                                    }
+                                }
+                            }
+                            Action::SearchCancel => {
+                                state.search_query = None;
+                                if let Some(cursor) = state.pre_search_cursor.take() {
+                                    state.cursor = cursor;
+                                }
+                            }
+                            Action::ToggleHideNonAgentSessions => {
+                                state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
+                            }
+                            Action::ToggleHideNonAgentPanes => {
+                                state.hide_non_agent_panes = !state.hide_non_agent_panes;
                             }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
@@ -480,15 +546,21 @@ async fn run_loop(
                                 state.show_help = false;
                             }
                             Action::FocusInput => {
+                                state.search_query = None;
+                                state.pre_search_cursor = None;
                                 state.focus_input();
                             }
                             Action::FocusSidebar => {
                                 state.focus_sidebar();
                             }
                             Action::FocusPreview => {
+                                state.search_query = None;
+                                state.pre_search_cursor = None;
                                 state.focus_preview();
                             }
                             Action::CycleFocus => {
+                                state.search_query = None;
+                                state.pre_search_cursor = None;
                                 state.toggle_focus();
                             }
                             Action::ClearInput => {
@@ -699,6 +771,9 @@ async fn run_loop(
                                                         "Failed to focus: {}",
                                                         e
                                                     ));
+                                                } else if state.popup_mode {
+                                                    tracing::info!("popup mode: quitting after flash-go");
+                                                    state.should_quit = true;
                                                 }
                                             }
                                         }
@@ -718,6 +793,7 @@ async fn run_loop(
         }
 
         if state.should_quit {
+            tracing::info!("tmuxcc shutting down");
             break;
         }
     }
@@ -725,7 +801,11 @@ async fn run_loop(
     Ok(())
 }
 
-fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -> Action {
+pub(crate) fn map_key_to_action(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    state: &AppState,
+) -> Action {
     // If help is shown, handle scroll or close
     if state.show_help {
         return match code {
@@ -761,6 +841,24 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         return match code {
             KeyCode::Esc => Action::FlashCancel,
             KeyCode::Char(c) => Action::FlashInput(c),
+            _ => Action::None,
+        };
+    }
+
+    // If search mode is active, handle search keys
+    if state.search_query.is_some() {
+        return match code {
+            KeyCode::Esc => Action::SearchCancel,
+            KeyCode::Enter => Action::SearchConfirm,
+            KeyCode::Backspace => Action::SearchBackspace,
+            KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchNext,
+            KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchPrev,
+            KeyCode::Down => Action::SearchNext,
+            KeyCode::Up => Action::SearchPrev,
+            KeyCode::Tab => Action::FocusInput,
+            KeyCode::BackTab => Action::FocusPreview,
+            KeyCode::Right => Action::FocusInput,
+            KeyCode::Char(c) => Action::SearchInput(c),
             _ => Action::None,
         };
     }
@@ -827,12 +925,12 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Right => Action::FocusInput,
         KeyCode::Left => Action::None, // Already on sidebar
 
-        // Enter toggles collapse when on a session header
+        // Enter: collapse on session headers, focus pane on agents/panes
         KeyCode::Enter => {
             if matches!(state.cursor, TreeCursor::Session(_)) {
                 Action::ToggleCollapse
             } else {
-                Action::None
+                Action::FocusPane
             }
         }
 
@@ -858,6 +956,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('g') => Action::FlashFocusStart,
         KeyCode::Char('G') => Action::FlashGoStart,
 
+        // Search
+        KeyCode::Char('/') => Action::SearchStart,
+
         // Kill pane with 'dd' (double-tap)
         KeyCode::Char('d') => {
             if let Some((ref target, instant)) = state.pending_kill {
@@ -880,6 +981,8 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('[') => Action::CollapseAll,
         KeyCode::Char(']') => Action::ExpandAll,
 
+        KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
+        KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
         KeyCode::Char('p') => Action::TogglePrPanel,
@@ -907,10 +1010,106 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             } else if state.show_subagent_log {
                 Action::ToggleSubagentLog
             } else {
-                Action::None
+                Action::Quit
             }
         }
 
         _ => Action::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    #[test]
+    fn test_search_mode_tab_focuses_input() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Tab, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusInput);
+    }
+
+    #[test]
+    fn test_search_mode_right_focuses_input() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Right, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusInput);
+    }
+
+    #[test]
+    fn test_search_mode_backtab_focuses_preview() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::BackTab, KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::FocusPreview);
+    }
+
+    #[test]
+    fn test_search_mode_esc_cancels() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchCancel);
+    }
+
+    #[test]
+    fn test_search_mode_enter_confirms() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchConfirm);
+    }
+
+    #[test]
+    fn test_search_mode_up_down_navigate() {
+        let mut state = AppState::new();
+        state.search_query = Some("test".to_string());
+
+        assert_eq!(
+            map_key_to_action(KeyCode::Down, KeyModifiers::NONE, &state),
+            Action::SearchNext
+        );
+        assert_eq!(
+            map_key_to_action(KeyCode::Up, KeyModifiers::NONE, &state),
+            Action::SearchPrev
+        );
+    }
+
+    #[test]
+    fn test_sidebar_slash_starts_search() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('/'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::SearchStart);
+    }
+
+    #[test]
+    fn test_sidebar_enter_on_agent_focuses() {
+        let mut state = AppState::new();
+        state.cursor = TreeCursor::Agent(0);
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::FocusPane);
+    }
+
+    #[test]
+    fn test_sidebar_enter_on_session_collapses() {
+        let mut state = AppState::new();
+        state.cursor = TreeCursor::Session("test".to_string());
+        let action = map_key_to_action(KeyCode::Enter, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::ToggleCollapse);
+    }
+
+    #[test]
+    fn test_sidebar_esc_quits_when_no_selection() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::Quit);
     }
 }

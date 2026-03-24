@@ -207,10 +207,20 @@ pub struct AppState {
     pub pending_kill: Option<(String, Instant)>,
     /// Spawn mode: Some(session_name) when active
     pub spawn_mode: Option<String>,
+    /// Whether to hide sessions that have no agents
+    pub hide_non_agent_sessions: bool,
+    /// Whether to hide non-agent panes within sessions
+    pub hide_non_agent_panes: bool,
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    pub popup_mode: bool,
     /// Rename mode: Some(target) when active
     pub rename_mode: Option<String>,
     /// Preview scroll offset
     pub preview_scroll: u16,
+    /// Search mode: active search query
+    pub search_query: Option<String>,
+    /// Cursor position before search started (for restore on cancel)
+    pub pre_search_cursor: Option<TreeCursor>,
     /// Flash navigation mode
     pub flash_mode: Option<FlashMode>,
     /// First character of a two-char flash label (waiting for second char)
@@ -248,7 +258,12 @@ impl AppState {
             pending_kill: None,
             spawn_mode: None,
             rename_mode: None,
+            hide_non_agent_sessions: true,
+            hide_non_agent_panes: true,
+            popup_mode: false,
             preview_scroll: 0,
+            search_query: None,
+            pre_search_cursor: None,
             flash_mode: None,
             flash_prefix: None,
             pr_info: HashMap::new(),
@@ -285,20 +300,75 @@ impl AppState {
             all_session_names.insert(s.as_str(), ());
         }
 
+        // Check if search is active with a non-empty query
+        let search_filter = self
+            .search_query
+            .as_ref()
+            .filter(|q| !q.is_empty())
+            .map(|q| q.to_lowercase());
+
         let mut items = Vec::new();
         for session in all_session_names.keys() {
-            items.push(NavItem::Session(session.to_string()));
+            // Skip sessions with no agents when hide_non_agent_sessions is enabled
+            if self.hide_non_agent_sessions && !agent_sessions.contains_key(session) {
+                continue;
+            }
+
+            // Collect child items for this session
+            let mut session_children = Vec::new();
             if !self.collapsed_sessions.contains(*session) {
                 if let Some(agent_indices) = agent_sessions.get(session) {
                     for &idx in agent_indices {
-                        items.push(NavItem::Agent(idx));
+                        session_children.push(NavItem::Agent(idx));
                     }
                 }
-                if let Some(nap_indices) = nap_sessions.get(session) {
-                    for &idx in nap_indices {
-                        items.push(NavItem::NonAgentPane(idx));
+                if !self.hide_non_agent_panes {
+                    if let Some(nap_indices) = nap_sessions.get(session) {
+                        for &idx in nap_indices {
+                            session_children.push(NavItem::NonAgentPane(idx));
+                        }
                     }
                 }
+            }
+
+            if let Some(ref query) = search_filter {
+                // Filter mode: only show sessions with matching children or matching name
+                let session_matches = session.to_lowercase().contains(query);
+                let matching_children: Vec<NavItem> = session_children
+                    .into_iter()
+                    .filter(|item| {
+                        let text = self.nav_item_text(item).to_lowercase();
+                        text.contains(query)
+                    })
+                    .collect();
+
+                if session_matches || !matching_children.is_empty() {
+                    items.push(NavItem::Session(session.to_string()));
+                    if session_matches && matching_children.is_empty() {
+                        // Session name matches but no children match — show all children
+                        // (re-collect since we consumed them)
+                        if !self.collapsed_sessions.contains(*session) {
+                            if let Some(agent_indices) = agent_sessions.get(session) {
+                                for &idx in agent_indices {
+                                    items.push(NavItem::Agent(idx));
+                                }
+                            }
+                            if !self.hide_non_agent_panes {
+                                if let Some(nap_indices) = nap_sessions.get(session) {
+                                    for &idx in nap_indices {
+                                        items.push(NavItem::NonAgentPane(idx));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        items.extend(matching_children);
+                    }
+                }
+            } else {
+                // Normal mode: show everything
+                items.push(NavItem::Session(session.to_string()));
+                items.extend(session_children);
             }
         }
         items
@@ -399,6 +469,11 @@ impl AppState {
     /// Check if preview panel is focused
     pub fn is_preview_focused(&self) -> bool {
         self.focused_panel == FocusedPanel::Preview
+    }
+
+    /// Check if sidebar panel is focused
+    pub fn is_sidebar_focused(&self) -> bool {
+        self.focused_panel == FocusedPanel::Sidebar
     }
 
     /// Focus on the input panel
@@ -569,6 +644,100 @@ impl AppState {
             .collect();
         targets.push(FlashTarget::InputArea);
         targets
+    }
+
+    /// Get searchable text for a nav item (session name, agent path, pane command)
+    pub fn nav_item_text(&self, item: &NavItem) -> String {
+        match item {
+            NavItem::Session(s) => s.clone(),
+            NavItem::Agent(idx) => self
+                .agents
+                .get_agent(*idx)
+                .map(|a| format!("{} {} {}", a.session, a.window_name, a.abbreviated_path()))
+                .unwrap_or_default(),
+            NavItem::NonAgentPane(idx) => self
+                .agents
+                .non_agent_panes
+                .get(*idx)
+                .map(|p| format!("{} {} {}", p.session, p.window_name, p.command))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Get nav items filtered by search query. Jumps cursor to first match.
+    pub fn apply_search(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            // Find first matching item and jump to it
+            for item in &nav_items {
+                let text = self.nav_item_text(item).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(item);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Jump cursor to the next search match after the current position
+    pub fn search_next(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+            // Search from current+1, wrapping around
+            for i in 1..=nav_items.len() {
+                let idx = (current_pos + i) % nav_items.len();
+                let text = self.nav_item_text(&nav_items[idx]).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(&nav_items[idx]);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Jump cursor to the previous search match before the current position
+    pub fn search_prev(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+            // Search backwards from current-1, wrapping around
+            for i in 1..=nav_items.len() {
+                let idx = (current_pos + nav_items.len() - i) % nav_items.len();
+                let text = self.nav_item_text(&nav_items[idx]).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(&nav_items[idx]);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Check if a nav item matches the current search query
+    pub fn matches_search(&self, item: &NavItem) -> bool {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return false;
+            }
+            let text = self.nav_item_text(item).to_lowercase();
+            text.contains(&query.to_lowercase())
+        } else {
+            false
+        }
     }
 
     /// Jump cursor to a flash target
@@ -989,5 +1158,296 @@ mod tests {
         assert_eq!(nav[0], NavItem::Session("alpha".to_string()));
         assert_eq!(nav[1], NavItem::Session("beta".to_string()));
         assert_eq!(nav[2], NavItem::Agent(1));
+    }
+
+    #[test]
+    fn test_hide_non_agent_panes() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state.agents.non_agent_panes.push(NonAgentPane {
+            target: "main:1.0".to_string(),
+            session: "main".to_string(),
+            window: 1,
+            window_name: "nvim".to_string(),
+            pane: 0,
+            command: "nvim".to_string(),
+            path: "/home/user".to_string(),
+        });
+
+        // Default: non-agent panes hidden
+        assert!(state.hide_non_agent_panes);
+        let nav = state.build_nav_items();
+        // Should have Session + Agent, no NonAgentPane
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("main".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(0));
+
+        // Toggle to show non-agent panes
+        state.hide_non_agent_panes = false;
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 3);
+        assert_eq!(nav[2], NavItem::NonAgentPane(0));
+    }
+
+    #[test]
+    fn test_hide_non_agent_sessions() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(make_agent("dev", "dev:0.0", 0, 0));
+        state.all_sessions = vec!["dev".to_string(), "scratch".to_string()];
+
+        // Default: non-agent sessions hidden
+        assert!(state.hide_non_agent_sessions);
+        let nav = state.build_nav_items();
+        // Should only show "dev" session (has agents), not "scratch"
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("dev".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(0));
+
+        // Toggle to show all sessions
+        state.hide_non_agent_sessions = false;
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 3); // dev session + agent + scratch session
+        assert!(nav.contains(&NavItem::Session("scratch".to_string())));
+    }
+
+    #[test]
+    fn test_search_jumps_to_match() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state.hide_non_agent_panes = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Start on first agent
+        state.cursor = TreeCursor::Agent(0);
+
+        // Search for "beta" should jump cursor to beta session or agent
+        state.search_query = Some("beta".to_string());
+        state.apply_search();
+
+        // Cursor should now be on something in beta
+        let session = state.selected_session().unwrap().to_string();
+        assert_eq!(session, "beta");
+    }
+
+    #[test]
+    fn test_search_next_wraps() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.1", 0, 1));
+
+        // Both agents are in "main", search for "main"
+        state.search_query = Some("main".to_string());
+        state.apply_search();
+        // Should be on session header "main"
+        assert_eq!(state.cursor, TreeCursor::Session("main".to_string()));
+
+        // Next match should move to agent 0
+        state.search_next();
+        assert_eq!(state.cursor, TreeCursor::Agent(0));
+
+        // Next match should move to agent 1
+        state.search_next();
+        assert_eq!(state.cursor, TreeCursor::Agent(1));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("MyProject", "MyProject:0.0", 0, 0));
+
+        state.search_query = Some("myproject".to_string());
+        assert!(state.matches_search(&NavItem::Session("MyProject".to_string())));
+    }
+
+    #[test]
+    fn test_search_cancel_restores_cursor() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Start on alpha agent
+        state.cursor = TreeCursor::Agent(0);
+        let original_cursor = state.cursor.clone();
+
+        // Simulate search start: save cursor
+        state.pre_search_cursor = Some(state.cursor.clone());
+        state.search_query = Some("beta".to_string());
+        state.apply_search();
+
+        // Cursor should have moved away from original
+        assert_ne!(state.cursor, original_cursor);
+
+        // Cancel search: cursor should restore
+        state.search_query = None;
+        if let Some(cursor) = state.pre_search_cursor.take() {
+            state.cursor = cursor;
+        }
+        assert_eq!(state.cursor, original_cursor);
+    }
+
+    #[test]
+    fn test_search_prev_wraps_around() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Search matches both sessions. Start cursor at the FIRST match.
+        state.search_query = Some("a".to_string());
+        state.apply_search();
+        let first_match = state.cursor.clone();
+
+        // Prev from the first match should wrap to the LAST match
+        state.search_prev();
+        let wrapped = state.cursor.clone();
+        assert_ne!(wrapped, first_match, "prev should wrap to a different item");
+
+        // Going next from the wrapped position should return to the first match
+        state.search_next();
+        assert_eq!(state.cursor, first_match, "next should unwrap back");
+    }
+
+    #[test]
+    fn test_search_confirm_on_session_expands_and_moves() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("dev", "dev:0.0", 0, 0));
+
+        // Collapse the session
+        state.collapsed_sessions.insert("dev".to_string());
+
+        // Search for "dev" — cursor lands on session header
+        state.search_query = Some("dev".to_string());
+        state.apply_search();
+        assert_eq!(state.cursor, TreeCursor::Session("dev".to_string()));
+
+        // Simulate what SearchConfirm does on a session:
+        // expand and move to first child
+        state.search_query = None;
+        state.collapsed_sessions.remove("dev");
+        state.select_next();
+
+        // Should now be on the agent, not the session
+        assert_eq!(state.cursor, TreeCursor::Agent(0));
+        assert!(!state.collapsed_sessions.contains("dev"));
+    }
+
+    #[test]
+    fn test_search_filters_nav_items() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Without search, both sessions visible
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 4); // 2 sessions + 2 agents
+
+        // With search for "beta", only beta session and agent visible
+        state.search_query = Some("beta".to_string());
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("beta".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(1));
+    }
+
+    #[test]
+    fn test_search_empty_query_shows_all() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+
+        // Empty search query should not filter
+        state.search_query = Some(String::new());
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 2); // session + agent
+    }
+
+    #[test]
+    fn test_flash_labels_single_char() {
+        let labels = generate_flash_labels(5);
+        assert_eq!(labels.len(), 5);
+        // All should be single characters
+        assert!(labels.iter().all(|l| l.len() == 1));
+        // First label should be 'a' (home row priority)
+        assert_eq!(labels[0], "a");
+    }
+
+    #[test]
+    fn test_flash_labels_overflow_to_two_char() {
+        let labels = generate_flash_labels(20);
+        assert_eq!(labels.len(), 20);
+        // First 14 are single char, rest are two-char with prefix
+        assert_eq!(labels[13].len(), 1); // last single char: 'o'
+        assert_eq!(labels[14].len(), 2); // first two-char
+        assert!(labels[14].starts_with(';'));
+    }
+
+    #[test]
+    fn test_focus_panel_methods() {
+        let mut state = AppState::new();
+        assert!(state.is_sidebar_focused()); // default
+
+        state.focus_input();
+        assert!(state.is_input_focused());
+        assert!(!state.is_sidebar_focused());
+        assert!(!state.is_preview_focused());
+
+        state.focus_preview();
+        assert!(state.is_preview_focused());
+        assert!(!state.is_sidebar_focused());
+        assert!(!state.is_input_focused());
+
+        state.focus_sidebar();
+        assert!(state.is_sidebar_focused());
     }
 }

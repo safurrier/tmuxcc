@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
@@ -94,15 +94,14 @@ impl PanePreviewWidget {
             let summary = ClaudeCodeSummary::parse(&agent.last_content);
 
             // Outer block for the entire summary area
+            let pv_focused = state.is_preview_focused();
+            let (pv_border_type, pv_border_style) = super::panel_border(pv_focused, Color::Cyan);
+            let title_text = format!(" {} ", agent.agent_type.short_name());
             let outer_block = Block::default()
-                .title(format!(" {} ", agent.agent_type.short_name()))
+                .title(super::panel_title(&title_text, pv_focused, Color::Cyan))
                 .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if state.is_preview_focused() {
-                    Color::Cyan
-                } else {
-                    Color::Gray
-                }));
+                .border_type(pv_border_type)
+                .border_style(pv_border_style);
 
             let inner_area = outer_block.inner(area);
             frame.render_widget(outer_block, area);
@@ -206,15 +205,13 @@ impl PanePreviewWidget {
             frame.render_widget(activity_paragraph, columns[1]);
         } else {
             // No agent selected
+            let pv_focused = state.is_preview_focused();
+            let (pv_border_type, pv_border_style) = super::panel_border(pv_focused, Color::Cyan);
             let block = Block::default()
-                .title(" Summary ")
+                .title(super::panel_title(" Summary ", pv_focused, Color::Cyan))
                 .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if state.is_preview_focused() {
-                    Color::Cyan
-                } else {
-                    Color::Gray
-                }));
+                .border_type(pv_border_type)
+                .border_style(pv_border_style);
 
             let paragraph = Paragraph::new(vec![Line::from(vec![Span::styled(
                 "No agent selected",
@@ -254,11 +251,13 @@ impl PanePreviewWidget {
             (" Preview ".to_string(), "No agent selected".to_string())
         };
 
+        let pv_focused = state.is_preview_focused();
+        let (pv_border_type, pv_border_style) = super::panel_border(pv_focused, Color::Cyan);
         let block = Block::default()
-            .title(title)
+            .title(super::panel_title(&title, pv_focused, Color::Cyan))
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Gray));
+            .border_type(pv_border_type)
+            .border_style(pv_border_style);
 
         let paragraph = Paragraph::new(content)
             .block(block)
@@ -317,17 +316,14 @@ impl PanePreviewWidget {
             )
         };
 
-        let border_color = if state.is_preview_focused() {
-            Color::Cyan
-        } else {
-            Color::Gray
-        };
+        let pv_focused = state.is_preview_focused();
+        let (pv_border_type, pv_border_style) = super::panel_border(pv_focused, Color::Cyan);
 
         let block = Block::default()
-            .title(title)
+            .title(super::panel_title(&title, pv_focused, Color::Cyan))
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(border_color));
+            .border_type(pv_border_type)
+            .border_style(pv_border_style);
 
         let paragraph = Paragraph::new(lines)
             .block(block)

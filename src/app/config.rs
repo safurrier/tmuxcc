@@ -17,13 +17,17 @@ pub struct Config {
     #[serde(default)]
     pub agent_patterns: Vec<AgentPattern>,
 
-    /// PR polling interval in milliseconds (default 30s)
+    /// PR polling interval in milliseconds (default 60s)
     #[serde(default = "default_pr_poll_interval")]
     pub pr_poll_interval_ms: u64,
 
     /// Whether PR monitoring is enabled
     #[serde(default = "default_pr_enabled")]
     pub pr_enabled: bool,
+
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    #[serde(skip)]
+    pub popup: bool,
 }
 
 fn default_poll_interval() -> u64 {
@@ -35,7 +39,7 @@ fn default_capture_lines() -> u32 {
 }
 
 fn default_pr_poll_interval() -> u64 {
-    30_000
+    60_000
 }
 
 fn default_pr_enabled() -> bool {
@@ -59,6 +63,7 @@ impl Default for Config {
             agent_patterns: Vec::new(),
             pr_poll_interval_ms: default_pr_poll_interval(),
             pr_enabled: default_pr_enabled(),
+            popup: false,
         }
     }
 }
@@ -130,7 +135,7 @@ mod tests {
     #[test]
     fn test_config_pr_defaults() {
         let config = Config::default();
-        assert_eq!(config.pr_poll_interval_ms, 30_000);
+        assert_eq!(config.pr_poll_interval_ms, 60_000);
         assert!(config.pr_enabled);
     }
 
@@ -149,7 +154,7 @@ mod tests {
     fn test_config_missing_pr_fields_uses_defaults() {
         let toml_str = r#"poll_interval_ms = 500"#;
         let parsed: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.pr_poll_interval_ms, 30_000);
+        assert_eq!(parsed.pr_poll_interval_ms, 60_000);
         assert!(parsed.pr_enabled);
     }
 }

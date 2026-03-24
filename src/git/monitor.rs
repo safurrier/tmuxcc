@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
 
@@ -19,6 +19,9 @@ pub struct PrMonitorTask {
     poll_interval: Duration,
     paths_rx: watch::Receiver<Vec<String>>,
 }
+
+/// Rate limit backoff duration (5 minutes)
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(300);
 
 impl PrMonitorTask {
     pub fn new(
@@ -42,7 +45,6 @@ impl PrMonitorTask {
 
         if !gh_available {
             tracing::warn!("gh CLI not available — PR monitoring disabled");
-            // Send a single update indicating gh is unavailable, then stop
             let _ = self
                 .tx
                 .send(PrMonitorUpdate {
@@ -53,42 +55,88 @@ impl PrMonitorTask {
         }
 
         // Immediate first poll
+        tracing::info!(
+            interval_ms = self.poll_interval.as_millis() as u64,
+            "PR monitor started"
+        );
         self.poll_and_send().await;
 
-        // Clone the receiver so we can use changed() in select
-        let mut paths_rx = self.paths_rx.clone();
+        // Use interval instead of sleep so watch channel wakes don't starve the timer
+        let mut interval = tokio::time::interval(self.poll_interval);
+        interval.tick().await; // consume the immediate first tick
 
+        let mut paths_rx = self.paths_rx.clone();
+        let mut last_paths: Vec<String> = deduplicate_paths(&self.paths_rx.borrow());
+        let mut rate_limited_until: Option<Instant> = None;
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.poll_interval) => {
-                    self.poll_and_send().await;
+                // Periodic polling — always fires on schedule
+                _ = interval.tick() => {
+                    // Skip if rate limited
+                    if let Some(until) = rate_limited_until {
+                        if Instant::now() < until {
+                            tracing::debug!("PR poll skipped — rate limited");
+                            continue;
+                        }
+                        rate_limited_until = None;
+                    }
+                    tracing::debug!(paths = last_paths.len(), "PR periodic poll");
+                    let rate_limited = self.poll_and_send().await;
+                    last_paths = deduplicate_paths(&self.paths_rx.borrow());
+                    if rate_limited {
+                        tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
+                        rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
+                    }
                 }
+                // Watch for path changes — poll immediately if paths actually changed
                 result = paths_rx.changed() => {
                     if result.is_ok() {
-                        // Paths changed — poll immediately
-                        self.poll_and_send().await;
+                        let new_paths = deduplicate_paths(&self.paths_rx.borrow());
+                        if new_paths != last_paths {
+                            tracing::info!(old = last_paths.len(), new = new_paths.len(), "PR monitor: paths changed, polling now");
+                            last_paths.clone_from(&new_paths);
+                            // Poll immediately on real path changes (unless rate limited)
+                            if rate_limited_until.is_none_or(|until| Instant::now() >= until) {
+                                if rate_limited_until.is_some() {
+                                    rate_limited_until = None;
+                                }
+                                let rate_limited = self.poll_and_send().await;
+                                last_paths = deduplicate_paths(&self.paths_rx.borrow());
+                                if rate_limited {
+                                    tracing::warn!("GitHub API rate limited — backing off for 5 minutes");
+                                    rate_limited_until = Some(Instant::now() + RATE_LIMIT_BACKOFF);
+                                }
+                                // Reset interval so the next periodic poll is a full interval away
+                                interval.reset();
+                            }
+                        }
                     }
                 }
                 _ = self.tx.closed() => {
+                    tracing::info!("PR monitor shutting down");
                     break;
                 }
             }
         }
     }
 
-    async fn poll_and_send(&self) {
+    /// Poll all paths and send results. Returns true if rate limited.
+    async fn poll_and_send(&self) -> bool {
         let paths = self.paths_rx.borrow().clone();
         let unique_paths: Vec<String> = deduplicate_paths(&paths);
 
         if unique_paths.is_empty() {
+            tracing::debug!("PR poll: no paths to monitor");
             let _ = self
                 .tx
                 .send(PrMonitorUpdate {
                     results: HashMap::new(),
                 })
                 .await;
-            return;
+            return false;
         }
+
+        tracing::debug!(count = unique_paths.len(), "PR poll: querying gh");
 
         // Spawn blocking tasks for each unique path
         let mut handles = Vec::new();
@@ -100,19 +148,33 @@ impl PrMonitorTask {
             handles.push(handle);
         }
 
-        // Collect results
+        // Collect results and check for rate limiting
         let mut results = HashMap::new();
+        let mut hit_rate_limit = false;
         for handle in handles {
             if let Ok((path, result)) = handle.await {
+                match &result {
+                    PrLookupResult::Error(msg) => {
+                        if msg.to_lowercase().contains("rate limit") {
+                            hit_rate_limit = true;
+                        }
+                        tracing::warn!(path = %path, error = %msg, "PR lookup error");
+                    }
+                    PrLookupResult::Found(pr) => {
+                        tracing::debug!(path = %path, pr = pr.number, "PR found");
+                    }
+                    _ => {}
+                }
                 results.insert(path, result);
             }
         }
 
         let _ = self.tx.send(PrMonitorUpdate { results }).await;
+        hit_rate_limit
     }
 }
 
-/// Deduplicate paths, preserving order of first occurrence
+/// Deduplicate and sort paths for stable comparison
 fn deduplicate_paths(paths: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
@@ -121,6 +183,7 @@ fn deduplicate_paths(paths: &[String]) -> Vec<String> {
             unique.push(path.clone());
         }
     }
+    unique.sort();
     unique
 }
 

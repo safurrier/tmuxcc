@@ -166,6 +166,21 @@ impl HelpWidget {
                 ),
             ]),
             blank(),
+            Line::from(vec![Span::styled("  Search", desc_style)]),
+            key(
+                "  /            ",
+                "Search: type to filter, Enter to go, Esc to cancel",
+                key_style,
+                desc_style,
+            ),
+            Line::from(vec![
+                Span::styled("                 ", dim_style),
+                Span::styled(
+                    "Up/Down: prev/next match. Matches session/window/path names.",
+                    dim_style,
+                ),
+            ]),
+            blank(),
             Line::from(vec![Span::styled("  Multi-select", desc_style)]),
             key(
                 "  Space        ",
@@ -182,6 +197,18 @@ impl HelpWidget {
             key("  Esc          ", "Clear selection", key_style, desc_style),
             blank(),
             Line::from(vec![Span::styled("  View toggles", desc_style)]),
+            key(
+                "  H            ",
+                "Toggle non-agent sessions (hidden by default)",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  V            ",
+                "Toggle non-agent panes (hidden by default)",
+                key_style,
+                desc_style,
+            ),
             key(
                 "  s / S        ",
                 "Toggle subagent log panel",

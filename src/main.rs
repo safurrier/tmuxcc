@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use tmuxcc::app::Config;
+use tmuxcc::logging;
 use tmuxcc::ui::run_app;
 
 #[derive(Parser)]
@@ -25,9 +25,13 @@ struct Cli {
     #[arg(short = 'f', long, value_name = "FILE")]
     config: Option<PathBuf>,
 
-    /// デバッグログを tmuxcc.log に出力
+    /// Enable verbose debug logging (logs always written to ~/.local/state/tmuxcc/)
     #[arg(short, long)]
     debug: bool,
+
+    /// Running inside a tmux popup (auto-quit on focus/go)
+    #[arg(long)]
+    popup: bool,
 
     /// 設定ファイルのパスを表示
     #[arg(long)]
@@ -65,18 +69,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Setup logging
-    if cli.debug {
-        let log_file = std::fs::File::create("tmuxcc.log")?;
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(log_file)
-            .with_ansi(false);
-
-        tracing_subscriber::registry()
-            .with(file_layer)
-            .with(tracing_subscriber::filter::LevelFilter::DEBUG)
-            .init();
-    }
+    // Setup logging (always on, --debug for verbose)
+    logging::init(cli.debug);
 
     // Load config (from file or CLI args)
     let mut config = if let Some(config_path) = &cli.config {
@@ -91,6 +85,7 @@ async fn main() -> Result<()> {
     // CLI args override config file
     config.poll_interval_ms = cli.poll_interval;
     config.capture_lines = cli.capture_lines;
+    config.popup = cli.popup;
 
     // Run the application
     run_app(config).await

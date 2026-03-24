@@ -126,30 +126,117 @@ impl TmuxClient {
         Ok(())
     }
 
-    /// Switches the current client to a different session
+    /// Switches the current client to a different session.
+    /// When running inside a tmux popup, targets the parent client instead.
     pub fn switch_client(&self, target: &str) -> Result<()> {
         // Extract session name from target (e.g. "discord:2.1" -> "discord")
         let session = target.split(':').next().unwrap_or(target);
 
-        let output = Command::new("tmux")
-            .args(["switch-client", "-t", session])
-            .output()
-            .context("Failed to execute tmux switch-client")?;
+        // Detect if we're in a popup by finding a parent client to target.
+        if let Some(parent_client) = self.find_parent_client() {
+            tracing::info!(parent = %parent_client, session, "popup detected, switching parent client");
+            let output = Command::new("tmux")
+                .args(["switch-client", "-c", &parent_client, "-t", session])
+                .output()
+                .context("Failed to execute tmux switch-client")?;
 
-        if !output.status.success() {
-            // switch-client fails if not running inside tmux — fall back silently
-            tracing::debug!(
-                "switch-client to {} failed (may not be inside tmux): {}",
-                session,
-                String::from_utf8_lossy(&output.stderr)
-            );
+            if !output.status.success() {
+                tracing::debug!(
+                    "switch-client -c {} to {} failed: {}",
+                    parent_client,
+                    session,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        } else {
+            let output = Command::new("tmux")
+                .args(["switch-client", "-t", session])
+                .output()
+                .context("Failed to execute tmux switch-client")?;
+
+            if !output.status.success() {
+                tracing::debug!(
+                    "switch-client to {} failed (may not be inside tmux): {}",
+                    session,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
         }
 
         Ok(())
     }
 
+    /// Find the parent (non-popup) client name.
+    /// Returns Some(client_tty) only if we are actually inside a tmux popup.
+    /// Uses client_flags to detect popup context rather than just counting clients.
+    fn find_parent_client(&self) -> Option<String> {
+        // Check if our client is a popup by looking at client_flags
+        let flags_output = Command::new("tmux")
+            .args(["display-message", "-p", "#{client_flags}"])
+            .output()
+            .ok()?;
+        let _flags = String::from_utf8_lossy(&flags_output.stdout)
+            .trim()
+            .to_string();
+
+        // Popup clients don't have a real tty — their client_flags is empty or
+        // they have a special popup indicator. More reliably: popup clients have
+        // no client_tty (it's empty or a pseudo-tty).
+        // The definitive check: if we're in a popup, our TMUX_PANE starts with %
+        // and we can check via the client list for non-popup clients.
+
+        // Get our own client tty
+        let own_output = Command::new("tmux")
+            .args(["display-message", "-p", "#{client_tty}"])
+            .output()
+            .ok()?;
+        let own_tty = String::from_utf8_lossy(&own_output.stdout)
+            .trim()
+            .to_string();
+
+        // List all clients with their tty and flags
+        let output = Command::new("tmux")
+            .args(["list-clients", "-F", "#{client_tty}\t#{client_flags}"])
+            .output()
+            .ok()?;
+
+        let mut our_is_popup = false;
+        let mut parent_tty: Option<String> = None;
+
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            let tty = parts.first().unwrap_or(&"").trim().to_string();
+            let client_flags = parts.get(1).unwrap_or(&"").trim();
+
+            if tty == own_tty {
+                // Check if our client is a popup (empty tty or popup flag)
+                if own_tty.is_empty() || client_flags.contains('p') {
+                    our_is_popup = true;
+                }
+            } else if !tty.is_empty() {
+                // A non-popup client with a real tty
+                if parent_tty.is_none() {
+                    parent_tty = Some(tty);
+                }
+            }
+        }
+
+        // Also detect popup by empty own_tty (popup clients often have no tty)
+        if own_tty.is_empty() {
+            our_is_popup = true;
+        }
+
+        // Only return parent if we're actually in a popup
+        if our_is_popup {
+            parent_tty
+        } else {
+            None
+        }
+    }
+
     /// Focuses on a pane by switching to its session, selecting window and pane
     pub fn focus_pane(&self, target: &str) -> Result<()> {
+        tracing::info!(target, "focusing pane");
         self.switch_client(target)?;
         self.select_window(target)?;
         self.select_pane(target)?;

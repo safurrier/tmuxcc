@@ -99,6 +99,24 @@ pub enum Action {
     FlashInput(char),
     /// Cancel flash mode
     FlashCancel,
+    /// Start search mode
+    SearchStart,
+    /// Character input during search
+    SearchInput(char),
+    /// Delete last character in search
+    SearchBackspace,
+    /// Jump to next search match
+    SearchNext,
+    /// Jump to previous search match
+    SearchPrev,
+    /// Confirm search (exit search mode, keep cursor position)
+    SearchConfirm,
+    /// Cancel search (exit search mode, restore cursor)
+    SearchCancel,
+    /// Toggle hiding non-agent sessions
+    ToggleHideNonAgentSessions,
+    /// Toggle hiding non-agent panes within sessions
+    ToggleHideNonAgentPanes,
     /// Toggle PR detail panel
     TogglePrPanel,
     /// Open PR URL in browser
@@ -162,6 +180,15 @@ impl Action {
             Action::FlashGoStart => "Flash-go navigation",
             Action::FlashInput(_) => "Flash label input",
             Action::FlashCancel => "Cancel flash",
+            Action::SearchStart => "Search",
+            Action::SearchInput(_) => "Search input",
+            Action::SearchBackspace => "Search backspace",
+            Action::SearchNext => "Next search match",
+            Action::SearchPrev => "Previous search match",
+            Action::SearchConfirm => "Confirm search",
+            Action::SearchCancel => "Cancel search",
+            Action::ToggleHideNonAgentSessions => "Toggle non-agent sessions",
+            Action::ToggleHideNonAgentPanes => "Toggle non-agent panes",
             Action::TogglePrPanel => "Toggle PR detail panel",
             Action::OpenPrUrl => "Open PR in browser",
             Action::CopyPrUrl => "Copy PR URL to clipboard",
