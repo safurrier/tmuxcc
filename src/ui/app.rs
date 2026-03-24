@@ -480,12 +480,21 @@ async fn run_loop(
                             Action::SearchConfirm => {
                                 state.search_query = None;
                                 state.pre_search_cursor = None;
-                                // Also focus the pane (same as Enter in sidebar)
-                                if let Some(target) = state.selected_pane_target() {
+                                // If on a session header, expand and move to first child
+                                if matches!(state.cursor, TreeCursor::Session(_)) {
+                                    if let Some(session) =
+                                        state.selected_session().map(|s| s.to_string())
+                                    {
+                                        state.collapsed_sessions.remove(&session);
+                                    }
+                                    state.select_next(); // move to first child
+                                } else if let Some(target) = state.selected_pane_target() {
                                     if let Err(e) = tmux_client.focus_pane(&target) {
                                         state.set_error(format!("Failed to focus: {}", e));
                                     } else if state.popup_mode {
-                                        tracing::info!("popup mode: quitting after search confirm");
+                                        tracing::info!(
+                                            "popup mode: quitting after search confirm"
+                                        );
                                         state.should_quit = true;
                                     }
                                 }
