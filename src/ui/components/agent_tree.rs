@@ -708,6 +708,10 @@ impl AgentTreeWidget {
                                 }
                             }
                             WindowItem::NonAgent(nap_idx, nap) => {
+                                // Skip non-agent panes when hidden
+                                if state.hide_non_agent_panes {
+                                    continue;
+                                }
                                 let is_cursor = state.cursor == TreeCursor::NonAgentPane(*nap_idx);
 
                                 let tree_prefix = if is_last_window {

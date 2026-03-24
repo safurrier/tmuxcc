@@ -189,6 +189,12 @@ impl HelpWidget {
                 desc_style,
             ),
             key(
+                "  V            ",
+                "Toggle non-agent panes (hidden by default)",
+                key_style,
+                desc_style,
+            ),
+            key(
                 "  s / S        ",
                 "Toggle subagent log panel",
                 key_style,

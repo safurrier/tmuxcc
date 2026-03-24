@@ -209,6 +209,8 @@ pub struct AppState {
     pub spawn_mode: Option<String>,
     /// Whether to hide sessions that have no agents
     pub hide_non_agent_sessions: bool,
+    /// Whether to hide non-agent panes within sessions
+    pub hide_non_agent_panes: bool,
     /// Running inside a tmux popup (auto-quit on focus/go)
     pub popup_mode: bool,
     /// Rename mode: Some(target) when active
@@ -253,6 +255,7 @@ impl AppState {
             spawn_mode: None,
             rename_mode: None,
             hide_non_agent_sessions: true,
+            hide_non_agent_panes: true,
             popup_mode: false,
             preview_scroll: 0,
             flash_mode: None,
@@ -304,9 +307,11 @@ impl AppState {
                         items.push(NavItem::Agent(idx));
                     }
                 }
-                if let Some(nap_indices) = nap_sessions.get(session) {
-                    for &idx in nap_indices {
-                        items.push(NavItem::NonAgentPane(idx));
+                if !self.hide_non_agent_panes {
+                    if let Some(nap_indices) = nap_sessions.get(session) {
+                        for &idx in nap_indices {
+                            items.push(NavItem::NonAgentPane(idx));
+                        }
                     }
                 }
             }
