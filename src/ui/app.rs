@@ -545,6 +545,8 @@ async fn run_loop(
                                 state.focus_sidebar();
                             }
                             Action::FocusPreview => {
+                                state.search_query = None;
+                                state.pre_search_cursor = None;
                                 state.focus_preview();
                             }
                             Action::CycleFocus => {
@@ -840,8 +842,8 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchPrev,
             KeyCode::Down => Action::SearchNext,
             KeyCode::Up => Action::SearchPrev,
-            KeyCode::Tab => Action::CycleFocus,
-            KeyCode::BackTab => Action::FocusInput,
+            KeyCode::Tab => Action::FocusInput,
+            KeyCode::BackTab => Action::FocusPreview,
             KeyCode::Right => Action::FocusInput,
             KeyCode::Char(c) => Action::SearchInput(c),
             _ => Action::None,
