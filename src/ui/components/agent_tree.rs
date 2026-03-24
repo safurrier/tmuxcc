@@ -333,13 +333,13 @@ impl AgentTreeWidget {
                         if search_active {
                             window_items.iter().any(|item| match item {
                                 WindowItem::Agent(idx, _) => {
-                                    visible_agents.as_ref().map_or(true, |va| va.contains(idx))
+                                    visible_agents.as_ref().is_none_or(|va| va.contains(idx))
                                 }
                                 WindowItem::NonAgent(idx, _) => {
                                     if state.hide_non_agent_panes {
                                         return false;
                                     }
-                                    visible_naps.as_ref().map_or(true, |vn| vn.contains(idx))
+                                    visible_naps.as_ref().is_none_or(|vn| vn.contains(idx))
                                 }
                             })
                         } else {
@@ -377,13 +377,13 @@ impl AgentTreeWidget {
                         .enumerate()
                         .filter(|(_, item)| match item {
                             WindowItem::Agent(idx, _) => {
-                                visible_agents.as_ref().map_or(true, |va| va.contains(idx))
+                                visible_agents.as_ref().is_none_or(|va| va.contains(idx))
                             }
                             WindowItem::NonAgent(idx, _) => {
                                 if state.hide_non_agent_panes {
                                     return false;
                                 }
-                                visible_naps.as_ref().map_or(true, |vn| vn.contains(idx))
+                                visible_naps.as_ref().is_none_or(|vn| vn.contains(idx))
                             }
                         })
                         .map(|(i, _)| i)
@@ -392,7 +392,7 @@ impl AgentTreeWidget {
                     for (item_idx, window_item) in window_items.iter().enumerate() {
                         let is_last_item = visible_item_indices
                             .last()
-                            .map_or(false, |&last| item_idx == last);
+                            .is_some_and(|&last| item_idx == last);
 
                         match window_item {
                             WindowItem::Agent(original_idx, agent) => {

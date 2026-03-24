@@ -96,7 +96,7 @@ impl PrMonitorTask {
                             tracing::info!(old = last_paths.len(), new = new_paths.len(), "PR monitor: paths changed, polling now");
                             last_paths.clone_from(&new_paths);
                             // Poll immediately on real path changes (unless rate limited)
-                            if rate_limited_until.map_or(true, |until| Instant::now() >= until) {
+                            if rate_limited_until.is_none_or(|until| Instant::now() >= until) {
                                 if rate_limited_until.is_some() {
                                     rate_limited_until = None;
                                 }
