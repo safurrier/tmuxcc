@@ -1317,7 +1317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_search_prev_wraps() {
+    fn test_search_prev_wraps_around() {
         let mut state = AppState::new();
         state.hide_non_agent_sessions = false;
         state
@@ -1329,18 +1329,47 @@ mod tests {
             .root_agents
             .push(make_agent("beta", "beta:0.0", 0, 0));
 
-        // Search for a term matching both sessions
-        state.search_query = Some("a".to_string()); // matches alpha and beta
+        // Search matches both sessions. Start cursor at the FIRST match.
+        state.search_query = Some("a".to_string());
         state.apply_search();
-        let first_cursor = state.cursor.clone();
+        let first_match = state.cursor.clone();
 
-        // Go to next, then prev should return to same position
-        state.search_next();
-        let second_cursor = state.cursor.clone();
-        assert_ne!(first_cursor, second_cursor);
-
+        // Prev from the first match should wrap to the LAST match
         state.search_prev();
-        assert_eq!(state.cursor, first_cursor);
+        let wrapped = state.cursor.clone();
+        assert_ne!(wrapped, first_match, "prev should wrap to a different item");
+
+        // Going next from the wrapped position should return to the first match
+        state.search_next();
+        assert_eq!(state.cursor, first_match, "next should unwrap back");
+    }
+
+    #[test]
+    fn test_search_confirm_on_session_expands_and_moves() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("dev", "dev:0.0", 0, 0));
+
+        // Collapse the session
+        state.collapsed_sessions.insert("dev".to_string());
+
+        // Search for "dev" — cursor lands on session header
+        state.search_query = Some("dev".to_string());
+        state.apply_search();
+        assert_eq!(state.cursor, TreeCursor::Session("dev".to_string()));
+
+        // Simulate what SearchConfirm does on a session:
+        // expand and move to first child
+        state.search_query = None;
+        state.collapsed_sessions.remove("dev");
+        state.select_next();
+
+        // Should now be on the agent, not the session
+        assert_eq!(state.cursor, TreeCursor::Agent(0));
+        assert!(!state.collapsed_sessions.contains("dev"));
     }
 
     #[test]
