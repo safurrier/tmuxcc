@@ -648,6 +648,28 @@ impl AppState {
         }
     }
 
+    /// Jump cursor to the previous search match before the current position
+    pub fn search_prev(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+            // Search backwards from current-1, wrapping around
+            for i in 1..=nav_items.len() {
+                let idx = (current_pos + nav_items.len() - i) % nav_items.len();
+                let text = self.nav_item_text(&nav_items[idx]).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(&nav_items[idx]);
+                    return;
+                }
+            }
+        }
+    }
+
     /// Check if a nav item matches the current search query
     pub fn matches_search(&self, item: &NavItem) -> bool {
         if let Some(ref query) = self.search_query {

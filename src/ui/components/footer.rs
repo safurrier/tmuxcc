@@ -92,9 +92,9 @@ impl FooterWidget {
                 Span::styled("_", Style::default().fg(Color::DarkGray)),
                 Span::styled(" | ", sep),
                 Span::styled("Enter", key),
-                Span::styled(":Confirm ", txt),
-                Span::styled("Ctrl+n/\u{2193}", key),
-                Span::styled(":Next ", txt),
+                Span::styled(":Go ", txt),
+                Span::styled("\u{2191}\u{2193}", key),
+                Span::styled(":Prev/Next ", txt),
                 Span::styled("ESC", key),
                 Span::styled(":Cancel", txt),
             ]);

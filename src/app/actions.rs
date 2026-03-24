@@ -107,6 +107,8 @@ pub enum Action {
     SearchBackspace,
     /// Jump to next search match
     SearchNext,
+    /// Jump to previous search match
+    SearchPrev,
     /// Confirm search (exit search mode, keep cursor position)
     SearchConfirm,
     /// Cancel search (exit search mode, restore cursor)
@@ -182,6 +184,7 @@ impl Action {
             Action::SearchInput(_) => "Search input",
             Action::SearchBackspace => "Search backspace",
             Action::SearchNext => "Next search match",
+            Action::SearchPrev => "Previous search match",
             Action::SearchConfirm => "Confirm search",
             Action::SearchCancel => "Cancel search",
             Action::ToggleHideNonAgentSessions => "Toggle non-agent sessions",

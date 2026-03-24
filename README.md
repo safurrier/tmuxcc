@@ -73,10 +73,11 @@ You can also run `tmuxcc` directly in any terminal pane — it works the same wa
 | `j` / `k` | Move up/down in the sidebar |
 | `Enter` | Jump to pane in tmux (collapse/expand on session headers) |
 | `f` / `F` | Focus pane in tmux |
+| `/` | Search: type to filter, Up/Down for prev/next match, Enter to go |
 | `g` | Flash-focus: show labels, press one to jump cursor |
 | `G` | Flash-go: show labels, press one to jump + attach tmux |
 | `Tab` | Cycle focus: Sidebar → Preview → Input |
-| `Esc` | Quit (or dismiss selection/subagent log first) |
+| `Esc` | Quit (or dismiss search/selection first) |
 | `q` | Quit |
 
 ### Agent Actions

@@ -473,8 +473,20 @@ async fn run_loop(
                             Action::SearchNext => {
                                 state.search_next();
                             }
+                            Action::SearchPrev => {
+                                state.search_prev();
+                            }
                             Action::SearchConfirm => {
                                 state.search_query = None;
+                                // Also focus the pane (same as Enter in sidebar)
+                                if let Some(target) = state.selected_pane_target() {
+                                    if let Err(e) = tmux_client.focus_pane(&target) {
+                                        state.set_error(format!("Failed to focus: {}", e));
+                                    } else if state.popup_mode {
+                                        tracing::info!("popup mode: quitting after search confirm");
+                                        state.should_quit = true;
+                                    }
+                                }
                             }
                             Action::SearchCancel => {
                                 state.search_query = None;
@@ -816,7 +828,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
             KeyCode::Enter => Action::SearchConfirm,
             KeyCode::Backspace => Action::SearchBackspace,
             KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchNext,
+            KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchPrev,
             KeyCode::Down => Action::SearchNext,
+            KeyCode::Up => Action::SearchPrev,
             KeyCode::Char(c) => Action::SearchInput(c),
             _ => Action::None,
         };
