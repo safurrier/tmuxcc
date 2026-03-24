@@ -37,6 +37,12 @@ pub async fn run_app(config: Config) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Initialize state
+    tracing::info!(
+        poll_ms = config.poll_interval_ms,
+        popup = config.popup,
+        pr_enabled = config.pr_enabled,
+        "starting tmuxcc"
+    );
     let mut state = AppState::new();
     state.popup_mode = config.popup;
 
@@ -435,6 +441,7 @@ async fn run_loop(
                                     if let Err(e) = tmux_client.focus_pane(&target) {
                                         state.set_error(format!("Failed to focus: {}", e));
                                     } else if state.popup_mode {
+                                        tracing::info!("popup mode: quitting after focus");
                                         state.should_quit = true;
                                     }
                                 }
@@ -709,6 +716,7 @@ async fn run_loop(
                                                         e
                                                     ));
                                                 } else if state.popup_mode {
+                                                    tracing::info!("popup mode: quitting after flash-go");
                                                     state.should_quit = true;
                                                 }
                                             }
@@ -729,6 +737,7 @@ async fn run_loop(
         }
 
         if state.should_quit {
+            tracing::info!("tmuxcc shutting down");
             break;
         }
     }

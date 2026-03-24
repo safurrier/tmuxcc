@@ -133,8 +133,8 @@ impl TmuxClient {
         let session = target.split(':').next().unwrap_or(target);
 
         // Detect if we're in a popup by finding a parent client to target.
-        // Inside a popup, there are multiple clients — we want the non-popup one.
         if let Some(parent_client) = self.find_parent_client() {
+            tracing::info!(parent = %parent_client, session, "popup detected, switching parent client");
             let output = Command::new("tmux")
                 .args(["switch-client", "-c", &parent_client, "-t", session])
                 .output()
@@ -236,6 +236,7 @@ impl TmuxClient {
 
     /// Focuses on a pane by switching to its session, selecting window and pane
     pub fn focus_pane(&self, target: &str) -> Result<()> {
+        tracing::info!(target, "focusing pane");
         self.switch_client(target)?;
         self.select_window(target)?;
         self.select_pane(target)?;

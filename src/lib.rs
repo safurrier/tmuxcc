@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod app;
 pub mod git;
+pub mod logging;
 pub mod monitor;
 pub mod parsers;
 pub mod tmux;

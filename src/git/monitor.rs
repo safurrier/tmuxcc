@@ -55,6 +55,10 @@ impl PrMonitorTask {
         }
 
         // Immediate first poll
+        tracing::info!(
+            interval_ms = self.poll_interval.as_millis() as u64,
+            "PR monitor started"
+        );
         self.poll_and_send().await;
 
         // Use interval instead of sleep so watch channel wakes don't starve the timer
@@ -71,10 +75,12 @@ impl PrMonitorTask {
                     // Skip if rate limited
                     if let Some(until) = rate_limited_until {
                         if Instant::now() < until {
+                            tracing::debug!("PR poll skipped — rate limited");
                             continue;
                         }
                         rate_limited_until = None;
                     }
+                    tracing::debug!(paths = last_paths.len(), "PR periodic poll");
                     let rate_limited = self.poll_and_send().await;
                     last_paths = deduplicate_paths(&self.paths_rx.borrow());
                     if rate_limited {
@@ -87,6 +93,7 @@ impl PrMonitorTask {
                     if result.is_ok() {
                         let new_paths = deduplicate_paths(&self.paths_rx.borrow());
                         if new_paths != last_paths {
+                            tracing::info!(old = last_paths.len(), new = new_paths.len(), "PR monitor: paths changed, polling now");
                             last_paths.clone_from(&new_paths);
                             // Poll immediately on real path changes (unless rate limited)
                             if rate_limited_until.map_or(true, |until| Instant::now() >= until) {
@@ -106,6 +113,7 @@ impl PrMonitorTask {
                     }
                 }
                 _ = self.tx.closed() => {
+                    tracing::info!("PR monitor shutting down");
                     break;
                 }
             }
@@ -118,6 +126,7 @@ impl PrMonitorTask {
         let unique_paths: Vec<String> = deduplicate_paths(&paths);
 
         if unique_paths.is_empty() {
+            tracing::debug!("PR poll: no paths to monitor");
             let _ = self
                 .tx
                 .send(PrMonitorUpdate {
@@ -126,6 +135,8 @@ impl PrMonitorTask {
                 .await;
             return false;
         }
+
+        tracing::debug!(count = unique_paths.len(), "PR poll: querying gh");
 
         // Spawn blocking tasks for each unique path
         let mut handles = Vec::new();
@@ -142,10 +153,17 @@ impl PrMonitorTask {
         let mut hit_rate_limit = false;
         for handle in handles {
             if let Ok((path, result)) = handle.await {
-                if let PrLookupResult::Error(ref msg) = result {
-                    if msg.to_lowercase().contains("rate limit") {
-                        hit_rate_limit = true;
+                match &result {
+                    PrLookupResult::Error(msg) => {
+                        if msg.to_lowercase().contains("rate limit") {
+                            hit_rate_limit = true;
+                        }
+                        tracing::warn!(path = %path, error = %msg, "PR lookup error");
                     }
+                    PrLookupResult::Found(pr) => {
+                        tracing::debug!(path = %path, pr = pr.number, "PR found");
+                    }
+                    _ => {}
                 }
                 results.insert(path, result);
             }
