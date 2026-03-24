@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 
@@ -89,17 +89,14 @@ impl AgentTreeWidget {
             format!(" {} agents ", agents.len())
         };
 
-        let border_color = if !state.is_input_focused() {
-            Color::Cyan
-        } else {
-            Color::Gray
-        };
+        let focused = state.is_sidebar_focused();
+        let (border_type, border_style) = super::panel_border(focused, Color::Cyan);
 
         let block = Block::default()
-            .title(title)
+            .title(super::panel_title(&title, focused, Color::Cyan))
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(border_color));
+            .border_type(border_type)
+            .border_style(border_style);
 
         // Build flash label lookup maps
         let flash_style = Style::default()

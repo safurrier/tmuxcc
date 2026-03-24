@@ -471,6 +471,11 @@ impl AppState {
         self.focused_panel == FocusedPanel::Preview
     }
 
+    /// Check if sidebar panel is focused
+    pub fn is_sidebar_focused(&self) -> bool {
+        self.focused_panel == FocusedPanel::Sidebar
+    }
+
     /// Focus on the input panel
     pub fn focus_input(&mut self) {
         self.focused_panel = FocusedPanel::Input;
