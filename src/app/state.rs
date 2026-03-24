@@ -1315,4 +1315,110 @@ mod tests {
         }
         assert_eq!(state.cursor, original_cursor);
     }
+
+    #[test]
+    fn test_search_prev_wraps() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Search for a term matching both sessions
+        state.search_query = Some("a".to_string()); // matches alpha and beta
+        state.apply_search();
+        let first_cursor = state.cursor.clone();
+
+        // Go to next, then prev should return to same position
+        state.search_next();
+        let second_cursor = state.cursor.clone();
+        assert_ne!(first_cursor, second_cursor);
+
+        state.search_prev();
+        assert_eq!(state.cursor, first_cursor);
+    }
+
+    #[test]
+    fn test_search_filters_nav_items() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Without search, both sessions visible
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 4); // 2 sessions + 2 agents
+
+        // With search for "beta", only beta session and agent visible
+        state.search_query = Some("beta".to_string());
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 2);
+        assert_eq!(nav[0], NavItem::Session("beta".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(1));
+    }
+
+    #[test]
+    fn test_search_empty_query_shows_all() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+
+        // Empty search query should not filter
+        state.search_query = Some(String::new());
+        let nav = state.build_nav_items();
+        assert_eq!(nav.len(), 2); // session + agent
+    }
+
+    #[test]
+    fn test_flash_labels_single_char() {
+        let labels = generate_flash_labels(5);
+        assert_eq!(labels.len(), 5);
+        // All should be single characters
+        assert!(labels.iter().all(|l| l.len() == 1));
+        // First label should be 'a' (home row priority)
+        assert_eq!(labels[0], "a");
+    }
+
+    #[test]
+    fn test_flash_labels_overflow_to_two_char() {
+        let labels = generate_flash_labels(20);
+        assert_eq!(labels.len(), 20);
+        // First 14 are single char, rest are two-char with prefix
+        assert_eq!(labels[13].len(), 1); // last single char: 'o'
+        assert_eq!(labels[14].len(), 2); // first two-char
+        assert!(labels[14].starts_with(';'));
+    }
+
+    #[test]
+    fn test_focus_panel_methods() {
+        let mut state = AppState::new();
+        assert!(state.is_sidebar_focused()); // default
+
+        state.focus_input();
+        assert!(state.is_input_focused());
+        assert!(!state.is_sidebar_focused());
+        assert!(!state.is_preview_focused());
+
+        state.focus_preview();
+        assert!(state.is_preview_focused());
+        assert!(!state.is_sidebar_focused());
+        assert!(!state.is_input_focused());
+
+        state.focus_sidebar();
+        assert!(state.is_sidebar_focused());
+    }
 }
