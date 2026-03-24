@@ -217,6 +217,8 @@ pub struct AppState {
     pub rename_mode: Option<String>,
     /// Preview scroll offset
     pub preview_scroll: u16,
+    /// Search mode: active search query
+    pub search_query: Option<String>,
     /// Flash navigation mode
     pub flash_mode: Option<FlashMode>,
     /// First character of a two-char flash label (waiting for second char)
@@ -258,6 +260,7 @@ impl AppState {
             hide_non_agent_panes: true,
             popup_mode: false,
             preview_scroll: 0,
+            search_query: None,
             flash_mode: None,
             flash_prefix: None,
             pr_info: HashMap::new(),
@@ -584,6 +587,78 @@ impl AppState {
             .collect();
         targets.push(FlashTarget::InputArea);
         targets
+    }
+
+    /// Get searchable text for a nav item (session name, agent path, pane command)
+    pub fn nav_item_text(&self, item: &NavItem) -> String {
+        match item {
+            NavItem::Session(s) => s.clone(),
+            NavItem::Agent(idx) => self
+                .agents
+                .get_agent(*idx)
+                .map(|a| format!("{} {} {}", a.session, a.window_name, a.abbreviated_path()))
+                .unwrap_or_default(),
+            NavItem::NonAgentPane(idx) => self
+                .agents
+                .non_agent_panes
+                .get(*idx)
+                .map(|p| format!("{} {} {}", p.session, p.window_name, p.command))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Get nav items filtered by search query. Jumps cursor to first match.
+    pub fn apply_search(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            // Find first matching item and jump to it
+            for item in &nav_items {
+                let text = self.nav_item_text(item).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(item);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Jump cursor to the next search match after the current position
+    pub fn search_next(&mut self) {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return;
+            }
+            let lower_query = query.to_lowercase();
+            let nav_items = self.build_nav_items();
+            let current_pos = self.find_nav_position(&nav_items).unwrap_or(0);
+
+            // Search from current+1, wrapping around
+            for i in 1..=nav_items.len() {
+                let idx = (current_pos + i) % nav_items.len();
+                let text = self.nav_item_text(&nav_items[idx]).to_lowercase();
+                if text.contains(&lower_query) {
+                    self.set_cursor_from_nav(&nav_items[idx]);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Check if a nav item matches the current search query
+    pub fn matches_search(&self, item: &NavItem) -> bool {
+        if let Some(ref query) = self.search_query {
+            if query.is_empty() {
+                return false;
+            }
+            let text = self.nav_item_text(item).to_lowercase();
+            text.contains(&query.to_lowercase())
+        } else {
+            false
+        }
     }
 
     /// Jump cursor to a flash target
@@ -1060,5 +1135,72 @@ mod tests {
         let nav = state.build_nav_items();
         assert_eq!(nav.len(), 3); // dev session + agent + scratch session
         assert!(nav.contains(&NavItem::Session("scratch".to_string())));
+    }
+
+    #[test]
+    fn test_search_jumps_to_match() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state.hide_non_agent_panes = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("alpha", "alpha:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("beta", "beta:0.0", 0, 0));
+
+        // Start on first agent
+        state.cursor = TreeCursor::Agent(0);
+
+        // Search for "beta" should jump cursor to beta session or agent
+        state.search_query = Some("beta".to_string());
+        state.apply_search();
+
+        // Cursor should now be on something in beta
+        let session = state.selected_session().unwrap().to_string();
+        assert_eq!(session, "beta");
+    }
+
+    #[test]
+    fn test_search_next_wraps() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.0", 0, 0));
+        state
+            .agents
+            .root_agents
+            .push(make_agent("main", "main:0.1", 0, 1));
+
+        // Both agents are in "main", search for "main"
+        state.search_query = Some("main".to_string());
+        state.apply_search();
+        // Should be on session header "main"
+        assert_eq!(state.cursor, TreeCursor::Session("main".to_string()));
+
+        // Next match should move to agent 0
+        state.search_next();
+        assert_eq!(state.cursor, TreeCursor::Agent(0));
+
+        // Next match should move to agent 1
+        state.search_next();
+        assert_eq!(state.cursor, TreeCursor::Agent(1));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let mut state = AppState::new();
+        state.hide_non_agent_sessions = false;
+        state
+            .agents
+            .root_agents
+            .push(make_agent("MyProject", "MyProject:0.0", 0, 0));
+
+        state.search_query = Some("myproject".to_string());
+        assert!(state.matches_search(&NavItem::Session("MyProject".to_string())));
     }
 }

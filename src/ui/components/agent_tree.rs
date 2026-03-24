@@ -170,8 +170,11 @@ impl AgentTreeWidget {
             let is_session_cursor = state.cursor == TreeCursor::Session(session.to_string());
             let is_collapsed = state.collapsed_sessions.contains(*session);
 
+            let is_search_match = state.matches_search(&NavItem::Session(session.to_string()));
             let session_style = if is_session_cursor {
                 Style::default().bg(Color::Rgb(50, 50, 70))
+            } else if is_search_match {
+                Style::default().bg(Color::Rgb(40, 40, 20))
             } else {
                 Style::default()
             };
@@ -401,10 +404,14 @@ impl AgentTreeWidget {
                                     AgentType::Unknown => Style::default().fg(Color::DarkGray),
                                 };
 
+                                let is_agent_search_match =
+                                    state.matches_search(&NavItem::Agent(*original_idx));
                                 let item_style = if is_cursor {
                                     Style::default().bg(Color::Rgb(50, 50, 70))
                                 } else if is_selected {
                                     Style::default().bg(Color::Rgb(35, 35, 50))
+                                } else if is_agent_search_match {
+                                    Style::default().bg(Color::Rgb(40, 40, 20))
                                 } else {
                                     Style::default()
                                 };
@@ -747,8 +754,12 @@ impl AgentTreeWidget {
                                         ("  ".to_string(), Style::default().fg(Color::White))
                                     };
 
+                                let is_nap_search_match =
+                                    state.matches_search(&NavItem::NonAgentPane(*nap_idx));
                                 let item_style = if is_cursor {
                                     Style::default().bg(Color::Rgb(50, 50, 70))
+                                } else if is_nap_search_match {
+                                    Style::default().bg(Color::Rgb(40, 40, 20))
                                 } else {
                                     Style::default()
                                 };

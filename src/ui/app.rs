@@ -455,6 +455,30 @@ async fn run_loop(
                             Action::ExpandAll => {
                                 state.expand_all();
                             }
+                            Action::SearchStart => {
+                                state.search_query = Some(String::new());
+                            }
+                            Action::SearchInput(c) => {
+                                if let Some(ref mut query) = state.search_query {
+                                    query.push(c);
+                                }
+                                state.apply_search();
+                            }
+                            Action::SearchBackspace => {
+                                if let Some(ref mut query) = state.search_query {
+                                    query.pop();
+                                }
+                                state.apply_search();
+                            }
+                            Action::SearchNext => {
+                                state.search_next();
+                            }
+                            Action::SearchConfirm => {
+                                state.search_query = None;
+                            }
+                            Action::SearchCancel => {
+                                state.search_query = None;
+                            }
                             Action::ToggleHideNonAgentSessions => {
                                 state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
                             }
@@ -785,6 +809,19 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         };
     }
 
+    // If search mode is active, handle search keys
+    if state.search_query.is_some() {
+        return match code {
+            KeyCode::Esc => Action::SearchCancel,
+            KeyCode::Enter => Action::SearchConfirm,
+            KeyCode::Backspace => Action::SearchBackspace,
+            KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Action::SearchNext,
+            KeyCode::Down => Action::SearchNext,
+            KeyCode::Char(c) => Action::SearchInput(c),
+            _ => Action::None,
+        };
+    }
+
     // If spawn mode is active, handle spawn keys
     if state.spawn_mode.is_some() {
         return match code {
@@ -877,6 +914,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         // Flash navigation
         KeyCode::Char('g') => Action::FlashFocusStart,
         KeyCode::Char('G') => Action::FlashGoStart,
+
+        // Search
+        KeyCode::Char('/') => Action::SearchStart,
 
         // Kill pane with 'dd' (double-tap)
         KeyCode::Char('d') => {

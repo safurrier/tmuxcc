@@ -174,7 +174,7 @@ impl PrMonitorTask {
     }
 }
 
-/// Deduplicate paths, preserving order of first occurrence
+/// Deduplicate and sort paths for stable comparison
 fn deduplicate_paths(paths: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
@@ -183,6 +183,7 @@ fn deduplicate_paths(paths: &[String]) -> Vec<String> {
             unique.push(path.clone());
         }
     }
+    unique.sort();
     unique
 }
 

@@ -166,6 +166,21 @@ impl HelpWidget {
                 ),
             ]),
             blank(),
+            Line::from(vec![Span::styled("  Search", desc_style)]),
+            key(
+                "  /            ",
+                "Search: type to filter, Enter to confirm, Esc to cancel",
+                key_style,
+                desc_style,
+            ),
+            Line::from(vec![
+                Span::styled("                 ", dim_style),
+                Span::styled(
+                    "Ctrl+n or Down: next match. Matches session/window/path names.",
+                    dim_style,
+                ),
+            ]),
+            blank(),
             Line::from(vec![Span::styled("  Multi-select", desc_style)]),
             key(
                 "  Space        ",
