@@ -138,6 +138,10 @@ pub struct PaneInfo {
     pub cmdline: String,
     /// Child process commands (for detecting running agents)
     pub child_commands: Vec<String>,
+    /// Whether this pane's window is the active window in its session
+    pub window_active: bool,
+    /// Whether this pane is the active pane in its window
+    pub pane_active: bool,
 }
 
 impl PaneInfo {
@@ -147,7 +151,7 @@ impl PaneInfo {
     }
 
     /// Parses a pane info from tmux list-panes output
-    /// Expected format: "session:window.pane\twindow_name\tcommand\tpid\ttitle\tpath"
+    /// Expected format: "session:window.pane\twindow_name\tcommand\tpid\ttitle\tpath\twindow_active\tpane_active"
     pub fn parse(line: &str) -> Option<Self> {
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() < 6 {
@@ -160,6 +164,10 @@ impl PaneInfo {
         let pid: u32 = parts[3].parse().ok()?;
         let title = parts[4].to_string();
         let path = parts[5].to_string();
+
+        // Parse active flags (may be absent for backwards compat)
+        let window_active = parts.get(6).map_or(false, |s| s.trim() == "1");
+        let pane_active = parts.get(7).map_or(false, |s| s.trim() == "1");
 
         // Parse target "session:window.pane"
         let (session, rest) = target.split_once(':')?;
@@ -184,6 +192,8 @@ impl PaneInfo {
             pid,
             cmdline,
             child_commands,
+            window_active,
+            pane_active,
         })
     }
 
@@ -227,6 +237,8 @@ mod tests {
             pid: 99999,
             cmdline: "".to_string(),
             child_commands: Vec::new(),
+            window_active: false,
+            pane_active: false,
         };
         assert_eq!(pane.target(), "dev:2.3");
     }
@@ -250,6 +262,8 @@ mod tests {
             pid: 1234,
             cmdline: "-zsh".to_string(),
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
+            window_active: true,
+            pane_active: true,
         };
         let strings = pane.detection_strings();
         assert!(strings.contains(&"zsh"));
