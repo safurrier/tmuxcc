@@ -88,12 +88,14 @@ impl SoundSource {
         }
 
         // Check if it looks like a path
-        let expanded = if value.starts_with('~') {
+        let expanded = if let Some(rest) = value.strip_prefix("~/") {
             if let Some(home) = dirs::home_dir() {
-                home.join(&value[2..]) // skip "~/"
+                home.join(rest)
             } else {
                 PathBuf::from(value)
             }
+        } else if value == "~" {
+            dirs::home_dir().unwrap_or_else(|| PathBuf::from(value))
         } else {
             PathBuf::from(value)
         };
@@ -143,10 +145,17 @@ impl SoundSource {
                         i
                     }
                     CycleMode::Random => {
-                        // Cheap pseudo-random without adding a dep: use nanoseconds
-                        let nanos = Instant::now().elapsed().subsec_nanos() as usize;
-                        // Mix in the index to avoid repeats when called in quick succession
-                        (nanos.wrapping_add(*index).wrapping_mul(2654435761)) % files.len()
+                        // Cheap pseudo-random without adding a dep.
+                        // Use system time nanos (high entropy) mixed with a counter
+                        // to avoid repeats on rapid calls.
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.subsec_nanos() as usize)
+                            .unwrap_or(0);
+                        let pick =
+                            nanos.wrapping_add(*index).wrapping_mul(2654435761) % files.len();
+                        *index = index.wrapping_add(1);
+                        pick
                     }
                 };
                 ResolvedSound::File(files[pick].clone())
