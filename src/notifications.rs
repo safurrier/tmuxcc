@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::agents::AgentStatus;
@@ -18,6 +19,9 @@ pub struct NotificationSounds {
     pub completed: String,
     #[serde(default = "default_needs_input_sound")]
     pub needs_input: String,
+    /// How to cycle through sounds when using a directory: "random" or "sequential"
+    #[serde(default = "default_cycle")]
+    pub cycle: String,
 }
 
 fn default_completed_sound() -> String {
@@ -28,11 +32,144 @@ fn default_needs_input_sound() -> String {
     "Ping".to_string()
 }
 
+fn default_cycle() -> String {
+    "random".to_string()
+}
+
 impl Default for NotificationSounds {
     fn default() -> Self {
         Self {
             completed: default_completed_sound(),
             needs_input: default_needs_input_sound(),
+            cycle: default_cycle(),
+        }
+    }
+}
+
+/// How to pick the next sound from a directory
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CycleMode {
+    Random,
+    Sequential,
+}
+
+/// A resolved sound source — either a system sound name or a directory of files
+#[derive(Debug, Clone)]
+enum SoundSource {
+    /// macOS system sound name (e.g. "Tink")
+    SystemSound(String),
+    /// Directory of audio files to cycle through
+    Directory { files: Vec<PathBuf>, index: usize },
+    /// No sound
+    None,
+}
+
+/// What to actually play for a single notification
+#[derive(Debug, Clone)]
+enum ResolvedSound {
+    /// Pass this name to --sound / sound name
+    SystemSound(String),
+    /// Play this file via afplay
+    File(PathBuf),
+    /// Silent
+    None,
+}
+
+/// Audio file extensions supported by afplay on macOS
+const SOUND_EXTENSIONS: &[&str] = &["aiff", "aif", "caf", "wav", "mp3"];
+
+impl SoundSource {
+    /// Parse a config string into a sound source.
+    /// If it looks like a path and resolves to a directory, scan it for audio files.
+    /// If it's "none", return None. Otherwise treat as a system sound name.
+    fn from_config(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("none") || value.is_empty() {
+            return Self::None;
+        }
+
+        // Check if it looks like a path
+        let expanded = if let Some(rest) = value.strip_prefix("~/") {
+            if let Some(home) = dirs::home_dir() {
+                home.join(rest)
+            } else {
+                PathBuf::from(value)
+            }
+        } else if value == "~" {
+            dirs::home_dir().unwrap_or_else(|| PathBuf::from(value))
+        } else if value.starts_with('/') {
+            PathBuf::from(value)
+        } else if value.starts_with('.') || value.contains('/') {
+            // Relative path — resolve relative to config dir (~/.config/tmuxcc/)
+            if let Some(config_dir) = dirs::config_dir() {
+                config_dir.join("tmuxcc").join(value)
+            } else {
+                PathBuf::from(value)
+            }
+        } else {
+            PathBuf::from(value)
+        };
+
+        if expanded.is_dir() {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&expanded)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| SOUND_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+                })
+                .collect();
+            files.sort();
+
+            if files.is_empty() {
+                tracing::warn!(dir = %expanded.display(), "sound directory is empty or has no audio files");
+                return Self::None;
+            }
+
+            tracing::info!(dir = %expanded.display(), count = files.len(), "loaded sound directory");
+            Self::Directory { files, index: 0 }
+        } else if value.starts_with('/') || value.starts_with('~') || value.starts_with('.') {
+            // Looks like a path but isn't a directory
+            tracing::warn!(path = %value, "sound path is not a directory, treating as system sound name");
+            Self::SystemSound(value.to_string())
+        } else {
+            Self::SystemSound(value.to_string())
+        }
+    }
+
+    /// Pick the next sound to play
+    fn resolve(&mut self, cycle_mode: CycleMode) -> ResolvedSound {
+        match self {
+            Self::SystemSound(name) => ResolvedSound::SystemSound(name.clone()),
+            Self::Directory { files, index } => {
+                if files.is_empty() {
+                    return ResolvedSound::None;
+                }
+                let pick = match cycle_mode {
+                    CycleMode::Sequential => {
+                        let i = *index;
+                        *index = (*index + 1) % files.len();
+                        i
+                    }
+                    CycleMode::Random => {
+                        // Cheap pseudo-random without adding a dep.
+                        // Use system time nanos (high entropy) mixed with a counter
+                        // to avoid repeats on rapid calls.
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.subsec_nanos() as usize)
+                            .unwrap_or(0);
+                        let pick =
+                            nanos.wrapping_add(*index).wrapping_mul(2654435761) % files.len();
+                        *index = index.wrapping_add(1);
+                        pick
+                    }
+                };
+                ResolvedSound::File(files[pick].clone())
+            }
+            Self::None => ResolvedSound::None,
         }
     }
 }
@@ -120,7 +257,9 @@ pub struct Notifier {
     cooldown: Duration,
     pub enabled: bool,
     pub app_focused: bool,
-    sounds: NotificationSounds,
+    completed_sound: SoundSource,
+    needs_input_sound: SoundSource,
+    cycle_mode: CycleMode,
     backend: NotificationBackend,
 }
 
@@ -129,12 +268,20 @@ impl Notifier {
         let backend = detect_backend(&config.backend);
         tracing::info!(%backend, "notification backend selected");
 
+        let cycle_mode = if config.sounds.cycle.eq_ignore_ascii_case("sequential") {
+            CycleMode::Sequential
+        } else {
+            CycleMode::Random
+        };
+
         Self {
             last_notified: HashMap::new(),
             cooldown: Duration::from_secs(config.cooldown_secs),
             enabled: config.enabled,
             app_focused: false,
-            sounds: config.sounds.clone(),
+            completed_sound: SoundSource::from_config(&config.sounds.completed),
+            needs_input_sound: SoundSource::from_config(&config.sounds.needs_input),
+            cycle_mode,
             backend,
         }
     }
@@ -210,7 +357,7 @@ impl Notifier {
         // Build notification content
         let pane_location = format!("{}:{} \"{}\"", info.session, info.window, info.window_name);
 
-        let (event_detail, sound) = match (&event, new) {
+        let event_detail = match (&event, new) {
             (
                 NotificationEvent::NeedsInput,
                 AgentStatus::AwaitingApproval {
@@ -218,7 +365,7 @@ impl Notifier {
                     details,
                 },
             ) => {
-                let detail = if details.is_empty() {
+                if details.is_empty() {
                     format!("{}", approval_type)
                 } else {
                     let d = if details.chars().count() > 60 {
@@ -228,11 +375,16 @@ impl Notifier {
                         details.clone()
                     };
                     format!("{}: {}", approval_type.short_desc(), d)
-                };
-                (detail, &self.sounds.needs_input)
+                }
             }
-            (NotificationEvent::Completed, _) => ("Finished".to_string(), &self.sounds.completed),
+            (NotificationEvent::Completed, _) => "Finished".to_string(),
             _ => return,
+        };
+
+        // Resolve sound for this event
+        let resolved_sound = match event {
+            NotificationEvent::Completed => self.completed_sound.resolve(self.cycle_mode),
+            NotificationEvent::NeedsInput => self.needs_input_sound.resolve(self.cycle_mode),
         };
 
         let body = format!("{} — {}", pane_location, event_detail);
@@ -242,6 +394,7 @@ impl Notifier {
             event = ?event,
             backend = %self.backend,
             body = %body,
+            sound = ?resolved_sound,
             "firing notification"
         );
 
@@ -250,7 +403,7 @@ impl Notifier {
             "tmuxcc",
             &info.agent_label,
             &body,
-            sound,
+            &resolved_sound,
             &info.agent_id,
             &info.target,
         );
@@ -302,15 +455,35 @@ fn send_notification(
     title: &str,
     subtitle: &str,
     body: &str,
-    sound: &str,
+    sound: &ResolvedSound,
     group: &str,
     pane_target: &str,
 ) {
+    // For file-based sounds, play via afplay separately
+    if let ResolvedSound::File(path) = sound {
+        let path = path.clone();
+        tokio::spawn(async move {
+            let result = tokio::process::Command::new("afplay")
+                .arg(&path)
+                .output()
+                .await;
+            if let Err(e) = result {
+                tracing::warn!(path = %path.display(), "failed to play sound file: {}", e);
+            }
+        });
+    }
+
+    // Extract system sound name (or empty for file/none)
+    let system_sound = match sound {
+        ResolvedSound::SystemSound(name) => name.as_str(),
+        _ => "",
+    };
+
     match backend {
         NotificationBackend::Alerter => {
-            send_alerter(title, subtitle, body, sound, group, pane_target)
+            send_alerter(title, subtitle, body, system_sound, group, pane_target)
         }
-        NotificationBackend::Osascript => send_osascript(title, subtitle, body, sound),
+        NotificationBackend::Osascript => send_osascript(title, subtitle, body, system_sound),
         NotificationBackend::NotifySend => send_notify_send(title, subtitle, body),
         NotificationBackend::Bel => send_bel(),
     }
@@ -467,8 +640,10 @@ mod tests {
             cooldown: Duration::from_secs(0),
             enabled: true,
             app_focused: false,
-            sounds: NotificationSounds::default(),
-            backend: NotificationBackend::Bel, // Use BEL in tests to avoid spawning processes
+            completed_sound: SoundSource::None,
+            needs_input_sound: SoundSource::None,
+            cycle_mode: CycleMode::Random,
+            backend: NotificationBackend::Bel,
         }
     }
 
@@ -552,7 +727,9 @@ mod tests {
             cooldown: Duration::from_secs(60),
             enabled: true,
             app_focused: false,
-            sounds: NotificationSounds::default(),
+            completed_sound: SoundSource::None,
+            needs_input_sound: SoundSource::None,
+            cycle_mode: CycleMode::Random,
             backend: NotificationBackend::Bel,
         };
         let info = make_info("a1");
@@ -608,6 +785,88 @@ mod tests {
         };
         n.check_and_notify(&info, &old, &new, false);
         assert!(n.last_notified.is_empty());
+    }
+
+    #[test]
+    fn test_sound_source_system_sound() {
+        let source = SoundSource::from_config("Tink");
+        assert!(matches!(source, SoundSource::SystemSound(ref s) if s == "Tink"));
+    }
+
+    #[test]
+    fn test_sound_source_none() {
+        assert!(matches!(
+            SoundSource::from_config("none"),
+            SoundSource::None
+        ));
+        assert!(matches!(
+            SoundSource::from_config("NONE"),
+            SoundSource::None
+        ));
+        assert!(matches!(SoundSource::from_config(""), SoundSource::None));
+    }
+
+    #[test]
+    fn test_sound_source_directory() {
+        let dir = std::env::temp_dir().join("tmuxcc_test_sounds");
+        let _ = std::fs::create_dir_all(&dir);
+        // Create fake audio files
+        std::fs::write(dir.join("01-clip.aiff"), b"fake").unwrap();
+        std::fs::write(dir.join("02-clip.wav"), b"fake").unwrap();
+        std::fs::write(dir.join("not-audio.txt"), b"fake").unwrap();
+
+        let source = SoundSource::from_config(dir.to_str().unwrap());
+        match source {
+            SoundSource::Directory { files, .. } => {
+                assert_eq!(files.len(), 2);
+                // Should be sorted
+                assert!(files[0]
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .contains("01"));
+                assert!(files[1]
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .contains("02"));
+            }
+            _ => panic!("expected Directory, got {:?}", source),
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_sound_resolve_sequential() {
+        let dir = std::env::temp_dir().join("tmuxcc_test_seq");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("a.aiff"), b"fake").unwrap();
+        std::fs::write(dir.join("b.aiff"), b"fake").unwrap();
+        std::fs::write(dir.join("c.aiff"), b"fake").unwrap();
+
+        let mut source = SoundSource::from_config(dir.to_str().unwrap());
+
+        // Sequential should cycle a -> b -> c -> a
+        let r1 = source.resolve(CycleMode::Sequential);
+        let r2 = source.resolve(CycleMode::Sequential);
+        let r3 = source.resolve(CycleMode::Sequential);
+        let r4 = source.resolve(CycleMode::Sequential);
+
+        let name = |r: &ResolvedSound| match r {
+            ResolvedSound::File(p) => p.file_name().unwrap().to_str().unwrap().to_string(),
+            _ => panic!("expected File"),
+        };
+
+        assert_eq!(name(&r1), "a.aiff");
+        assert_eq!(name(&r2), "b.aiff");
+        assert_eq!(name(&r3), "c.aiff");
+        assert_eq!(name(&r4), "a.aiff"); // wraps around
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
