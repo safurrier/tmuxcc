@@ -45,6 +45,7 @@ pub enum NotificationBackendConfig {
     Auto,
     Alerter,
     Osascript,
+    #[serde(rename = "notify-send")]
     NotifySend,
     Bel,
 }
@@ -220,8 +221,9 @@ impl Notifier {
                 let detail = if details.is_empty() {
                     format!("{}", approval_type)
                 } else {
-                    let d = if details.len() > 60 {
-                        format!("{}...", &details[..57])
+                    let d = if details.chars().count() > 60 {
+                        let truncated: String = details.chars().take(57).collect();
+                        format!("{}...", truncated)
                     } else {
                         details.clone()
                     };
