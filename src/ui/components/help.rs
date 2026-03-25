@@ -234,6 +234,18 @@ impl HelpWidget {
                 desc_style,
             ),
             key(
+                "  m            ",
+                "Mute/unmute desktop notifications",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  M            ",
+                "Cycle notification sound profile",
+                key_style,
+                desc_style,
+            ),
+            key(
                 "  <  /  >      ",
                 "Resize sidebar narrower / wider",
                 key_style,

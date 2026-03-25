@@ -262,6 +262,8 @@ pub struct AppState {
     pr_auto_opened: HashSet<String>,
     /// Whether desktop notifications are enabled (mirrors Notifier state for UI display)
     pub notifications_enabled: bool,
+    /// Active notification sound profile name (mirrors config for UI display)
+    pub notification_profile: String,
     /// Current sort mode for the sidebar tree
     pub sort_mode: SortMode,
 }
@@ -303,6 +305,7 @@ impl AppState {
             show_pr_panel: false,
             pr_auto_opened: HashSet::new(),
             notifications_enabled: true,
+            notification_profile: "default".to_string(),
             sort_mode: SortMode::default(),
         }
     }

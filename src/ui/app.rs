@@ -30,7 +30,7 @@ use super::components::{
 use super::Layout;
 
 /// Runs the main application loop
-pub async fn run_app(config: Config) -> Result<()> {
+pub async fn run_app(mut config: Config) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -53,6 +53,7 @@ pub async fn run_app(config: Config) -> Result<()> {
     let mut state = AppState::new();
     state.popup_mode = config.popup;
     state.notifications_enabled = config.notifications.enabled;
+    state.notification_profile = config.notifications.active_profile.clone();
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -107,6 +108,7 @@ pub async fn run_app(config: Config) -> Result<()> {
         &tmux_client,
         &mut system_stats,
         &mut notifier,
+        &mut config.notifications,
     )
     .await;
 
@@ -137,6 +139,7 @@ async fn run_loop(
     tmux_client: &TmuxClient,
     system_stats: &mut SystemStatsCollector,
     notifier: &mut Notifier,
+    notification_config: &mut crate::notifications::NotificationConfig,
 ) -> Result<()> {
     loop {
         // Advance animation tick
@@ -573,6 +576,13 @@ async fn run_loop(
                             Action::ToggleNotifications => {
                                 notifier.enabled = !notifier.enabled;
                                 state.notifications_enabled = notifier.enabled;
+                            }
+                            Action::CycleNotificationProfile => {
+                                notification_config.cycle_profile();
+                                let sounds = notification_config.resolve_sounds();
+                                notifier.reload_sounds(sounds);
+                                state.notification_profile =
+                                    notification_config.active_profile.clone();
                             }
                             Action::ToggleHideNonAgentSessions => {
                                 state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
@@ -1053,7 +1063,8 @@ pub(crate) fn map_key_to_action(
         KeyCode::Char('[') => Action::CollapseAll,
         KeyCode::Char(']') => Action::ExpandAll,
 
-        KeyCode::Char('M') => Action::ToggleNotifications,
+        KeyCode::Char('m') => Action::ToggleNotifications,
+        KeyCode::Char('M') => Action::CycleNotificationProfile,
         KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
         KeyCode::Char('s') => Action::CycleSortMode,
@@ -1199,5 +1210,19 @@ mod tests {
         let state = AppState::new();
         let action = map_key_to_action(KeyCode::Char('S'), KeyModifiers::SHIFT, &state);
         assert_eq!(action, Action::ToggleSubagentLog);
+    }
+
+    #[test]
+    fn test_sidebar_m_toggles_notifications() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('m'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::ToggleNotifications);
+    }
+
+    #[test]
+    fn test_sidebar_shift_m_cycles_profile() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('M'), KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::CycleNotificationProfile);
     }
 }

@@ -364,6 +364,23 @@ impl Notifier {
         }
     }
 
+    /// Reload sounds from a new profile's config
+    pub fn reload_sounds(&mut self, sounds: &NotificationSounds) {
+        self.cycle_mode = if sounds.cycle.eq_ignore_ascii_case("sequential") {
+            CycleMode::Sequential
+        } else {
+            CycleMode::Random
+        };
+        self.completed_sound = SoundSource::from_config(&sounds.completed);
+        self.needs_input_sound = SoundSource::from_config(&sounds.needs_input);
+        tracing::info!(
+            completed = %sounds.completed,
+            needs_input = %sounds.needs_input,
+            cycle = %sounds.cycle,
+            "notification sounds reloaded"
+        );
+    }
+
     /// Check a status transition and fire a notification if warranted.
     pub fn check_and_notify(
         &mut self,
@@ -1073,5 +1090,29 @@ cycle = "sequential"
         assert_eq!(config.active_profile, "alt");
         config.cycle_profile();
         assert_eq!(config.active_profile, "default");
+    }
+
+    #[test]
+    fn test_reload_sounds() {
+        let config = NotificationConfig::default();
+        let mut notifier = make_notifier();
+
+        // Reload with custom sounds
+        let custom = NotificationSounds {
+            completed: "Glass".to_string(),
+            needs_input: "Hero".to_string(),
+            cycle: "sequential".to_string(),
+        };
+        notifier.reload_sounds(&custom);
+
+        // Verify by resolving — system sounds should produce SystemSound variants
+        let resolved = notifier.completed_sound.resolve(notifier.cycle_mode);
+        assert!(matches!(resolved, ResolvedSound::SystemSound(ref s) if s == "Glass"));
+
+        let resolved = notifier.needs_input_sound.resolve(notifier.cycle_mode);
+        assert!(matches!(resolved, ResolvedSound::SystemSound(ref s) if s == "Hero"));
+
+        // Cycle mode should have changed to sequential
+        assert_eq!(notifier.cycle_mode, CycleMode::Sequential);
     }
 }

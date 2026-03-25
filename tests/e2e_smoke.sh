@@ -146,6 +146,33 @@ else
     fail "Footer missing sort mode badge"
 fi
 
+# Test 7: Footer shows notification profile badge
+if wait_for_text "smoke-session:tmuxcc" "m:default" 5; then
+    pass "Footer shows default notification profile badge"
+else
+    fail "Footer missing notification profile badge"
+fi
+
+# Test 8: Press 'm' to mute, verify muted indicator
+tmux -L "$SOCKET" send-keys -t "smoke-session:tmuxcc" "m"
+sleep 0.5
+
+if wait_for_text "smoke-session:tmuxcc" "m:muted" 5; then
+    pass "Pressing 'm' mutes notifications (footer shows 'm:muted')"
+else
+    fail "Footer does not show 'm:muted' after pressing 'm'"
+fi
+
+# Press 'm' again to unmute
+tmux -L "$SOCKET" send-keys -t "smoke-session:tmuxcc" "m"
+sleep 0.5
+
+if wait_for_text "smoke-session:tmuxcc" "m:default" 5; then
+    pass "Pressing 'm' again unmutes (footer shows 'm:default')"
+else
+    fail "Footer does not show 'm:default' after unmuting"
+fi
+
 # Quit tmuxcc
 tmux -L "$SOCKET" send-keys -t "smoke-session:tmuxcc" "q"
 sleep 1

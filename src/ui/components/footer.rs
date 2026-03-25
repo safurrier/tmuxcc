@@ -278,21 +278,18 @@ impl FooterWidget {
                 spans.push(Span::styled(" c ", btn_def));
             }
 
-            // Notification toggle indicator
+            // Notification mute toggle + profile indicator
             spans.push(Span::styled(" ", sep));
             if state.notifications_enabled {
+                spans.push(Span::styled("m", key));
                 spans.push(Span::styled(
-                    " M ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Rgb(100, 180, 255)),
+                    format!(":{}", state.notification_profile),
+                    txt,
                 ));
             } else {
                 spans.push(Span::styled(
-                    " M ",
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(Color::Rgb(60, 60, 60)),
+                    "m:muted",
+                    Style::default().fg(Color::DarkGray),
                 ));
             }
 
