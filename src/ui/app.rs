@@ -126,6 +126,7 @@ pub async fn run_app(config: Config) -> Result<()> {
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
