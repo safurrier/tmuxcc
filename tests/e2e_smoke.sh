@@ -68,6 +68,7 @@ tmux -L "$SOCKET" new-session -d -s "smoke-session" -x 120 -y 40
 tmux -L "$SOCKET" send-keys -t "smoke-session" "printf '\\033]0;claude\\007'" Enter
 
 tmux -L "$SOCKET" new-session -d -s "second-session" -x 120 -y 40
+tmux -L "$SOCKET" send-keys -t "second-session" "printf '\\033]0;claude\\007'" Enter
 
 sleep 1
 

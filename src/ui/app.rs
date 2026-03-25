@@ -1056,7 +1056,6 @@ pub(crate) fn map_key_to_action(
         KeyCode::Char('M') => Action::ToggleNotifications,
         KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
-        KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('s') => Action::CycleSortMode,
         KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
@@ -1187,12 +1186,6 @@ mod tests {
         let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
         assert_eq!(action, Action::Quit);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyCode, KeyModifiers};
 
     #[test]
     fn test_sidebar_s_cycles_sort() {

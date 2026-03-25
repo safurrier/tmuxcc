@@ -210,7 +210,6 @@ impl HelpWidget {
                 desc_style,
             ),
             key(
-                "  s / S        ",
                 "  s            ",
                 "Cycle sort mode (Recent / Status)",
                 key_style,

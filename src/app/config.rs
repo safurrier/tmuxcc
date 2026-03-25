@@ -97,7 +97,8 @@ impl Config {
     /// Loads config from a specific path
     pub fn load_from(path: &PathBuf) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        let mut config: Config = toml::from_str(&content)?;
+        config.notifications.migrate_legacy();
         Ok(config)
     }
 
@@ -163,5 +164,34 @@ mod tests {
         let parsed: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.pr_poll_interval_ms, 60_000);
         assert!(parsed.pr_enabled);
+    }
+
+    #[test]
+    fn test_config_with_profiles() {
+        let toml_str = r#"
+poll_interval_ms = 500
+
+[notifications]
+active_profile = "itysl"
+
+[notifications.profiles.default]
+completed = "Tink"
+needs_input = "Ping"
+cycle = "random"
+
+[notifications.profiles.itysl]
+completed = "~/.config/tmuxcc/sounds/completed/"
+needs_input = "~/.config/tmuxcc/sounds/needs_input/"
+cycle = "random"
+"#;
+        let parsed: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.notifications.active_profile, "itysl");
+        assert!(parsed.notifications.profiles.contains_key("default"));
+        assert!(parsed.notifications.profiles.contains_key("itysl"));
+        let sounds = parsed.notifications.resolve_sounds();
+        assert_eq!(
+            sounds.completed,
+            "~/.config/tmuxcc/sounds/completed/"
+        );
     }
 }
