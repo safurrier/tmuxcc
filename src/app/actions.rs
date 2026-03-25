@@ -125,6 +125,8 @@ pub enum Action {
     OpenPrUrl,
     /// Copy PR URL to clipboard
     CopyPrUrl,
+    /// Cycle sort mode (Activity -> Status -> Activity)
+    CycleSortMode,
     /// No action (used for unbound keys)
     None,
 }
@@ -195,6 +197,7 @@ impl Action {
             Action::TogglePrPanel => "Toggle PR detail panel",
             Action::OpenPrUrl => "Open PR in browser",
             Action::CopyPrUrl => "Copy PR URL to clipboard",
+            Action::CycleSortMode => "Cycle sort mode",
             Action::None => "",
         }
     }

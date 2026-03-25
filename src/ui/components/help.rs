@@ -211,6 +211,13 @@ impl HelpWidget {
             ),
             key(
                 "  s / S        ",
+                "  s            ",
+                "Cycle sort mode (Recent / Status)",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  S            ",
                 "Toggle subagent log panel",
                 key_style,
                 desc_style,

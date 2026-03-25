@@ -296,6 +296,14 @@ impl FooterWidget {
                 ));
             }
 
+            // Sort mode badge
+            spans.push(Span::styled(" \u{2502} ", sep));
+            spans.push(Span::styled("s", key));
+            spans.push(Span::styled(
+                format!(":{}", state.sort_mode.label()),
+                txt,
+            ));
+
             if !state.selected_agents.is_empty() {
                 spans.push(Span::styled(
                     format!(" ({}sel)", state.selected_agents.len()),

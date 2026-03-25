@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
+
+use indexmap::IndexMap;
 
 use ratatui::{
     layout::Rect,
@@ -24,11 +26,11 @@ enum WindowItem<'a> {
 /// Type alias for window key (window number, window name)
 type WindowKey<'a> = (u32, &'a str);
 
-/// Type alias for windows map
-type WindowsMap<'a> = BTreeMap<WindowKey<'a>, Vec<WindowItem<'a>>>;
+/// Type alias for windows map (IndexMap preserves insertion order)
+type WindowsMap<'a> = IndexMap<WindowKey<'a>, Vec<WindowItem<'a>>>;
 
-/// Type alias for sessions map
-type SessionsMap<'a> = BTreeMap<&'a str, WindowsMap<'a>>;
+/// Type alias for sessions map (IndexMap preserves insertion order from sorted agents)
+type SessionsMap<'a> = IndexMap<&'a str, WindowsMap<'a>>;
 
 /// Represents the hierarchical structure: Session -> Window -> Items
 struct SessionWindowTree<'a> {
@@ -41,7 +43,7 @@ impl<'a> SessionWindowTree<'a> {
         non_agent_panes: &'a [NonAgentPane],
         all_sessions: &'a [String],
     ) -> Self {
-        let mut sessions: SessionsMap<'a> = BTreeMap::new();
+        let mut sessions: SessionsMap<'a> = IndexMap::new();
 
         for (idx, agent) in agents.iter().enumerate() {
             sessions

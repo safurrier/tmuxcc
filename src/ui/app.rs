@@ -15,7 +15,8 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
 use crate::app::{
-    generate_flash_labels, Action, AppState, Config, FlashMode, FlashTarget, TreeCursor,
+    generate_flash_labels, sort_agents, Action, AppState, Config, FlashMode, FlashTarget,
+    TreeCursor,
 };
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::notifications::{AgentNotificationInfo, Notifier};
@@ -259,6 +260,8 @@ async fn run_loop(
 
                 state.agents = update.agents;
                 state.all_sessions = update.all_sessions;
+                // Apply current sort mode to the incoming agents
+                sort_agents(&mut state.agents.root_agents, state.sort_mode);
                 // Clamp cursor to valid range
                 state.clamp_cursor();
                 // Clean up invalid selections
@@ -576,6 +579,9 @@ async fn run_loop(
                             }
                             Action::ToggleHideNonAgentPanes => {
                                 state.hide_non_agent_panes = !state.hide_non_agent_panes;
+                            }
+                            Action::CycleSortMode => {
+                                state.cycle_sort_mode();
                             }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
@@ -1051,6 +1057,8 @@ pub(crate) fn map_key_to_action(
         KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
+        KeyCode::Char('s') => Action::CycleSortMode,
+        KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
         KeyCode::Char('p') => Action::TogglePrPanel,
         KeyCode::Char('o') => Action::OpenPrUrl,
@@ -1178,5 +1186,25 @@ mod tests {
         let state = AppState::new();
         let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
         assert_eq!(action, Action::Quit);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    #[test]
+    fn test_sidebar_s_cycles_sort() {
+        let state = AppState::new(); // sidebar focused by default
+        let action = map_key_to_action(KeyCode::Char('s'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::CycleSortMode);
+    }
+
+    #[test]
+    fn test_sidebar_shift_s_toggles_subagent_log() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('S'), KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::ToggleSubagentLog);
     }
 }
