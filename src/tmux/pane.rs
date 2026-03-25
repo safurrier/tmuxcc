@@ -166,8 +166,8 @@ impl PaneInfo {
         let path = parts[5].to_string();
 
         // Parse active flags (may be absent for backwards compat)
-        let window_active = parts.get(6).map_or(false, |s| s.trim() == "1");
-        let pane_active = parts.get(7).map_or(false, |s| s.trim() == "1");
+        let window_active = parts.get(6).is_some_and(|s| s.trim() == "1");
+        let pane_active = parts.get(7).is_some_and(|s| s.trim() == "1");
 
         // Parse target "session:window.pane"
         let (session, rest) = target.split_once(':')?;

@@ -283,12 +283,16 @@ impl FooterWidget {
             if state.notifications_enabled {
                 spans.push(Span::styled(
                     " M ",
-                    Style::default().fg(Color::Black).bg(Color::Rgb(100, 180, 255)),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Rgb(100, 180, 255)),
                 ));
             } else {
                 spans.push(Span::styled(
                     " M ",
-                    Style::default().fg(Color::DarkGray).bg(Color::Rgb(60, 60, 60)),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(Color::Rgb(60, 60, 60)),
                 ));
             }
 

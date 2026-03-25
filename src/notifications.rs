@@ -38,20 +38,15 @@ impl Default for NotificationSounds {
 }
 
 /// Available notification backends
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationBackendConfig {
+    #[default]
     Auto,
     Alerter,
     Osascript,
     NotifySend,
     Bel,
-}
-
-impl Default for NotificationBackendConfig {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Resolved notification backend
@@ -212,10 +207,7 @@ impl Notifier {
             .insert(info.agent_id.clone(), Instant::now());
 
         // Build notification content
-        let pane_location = format!(
-            "{}:{} \"{}\"",
-            info.session, info.window, info.window_name
-        );
+        let pane_location = format!("{}:{} \"{}\"", info.session, info.window, info.window_name);
 
         let (event_detail, sound) = match (&event, new) {
             (
