@@ -3,6 +3,7 @@ pub mod app;
 pub mod git;
 pub mod logging;
 pub mod monitor;
+pub mod notifications;
 pub mod parsers;
 pub mod tmux;
 pub mod ui;

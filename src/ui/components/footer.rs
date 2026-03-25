@@ -278,6 +278,24 @@ impl FooterWidget {
                 spans.push(Span::styled(" c ", btn_def));
             }
 
+            // Notification toggle indicator
+            spans.push(Span::styled(" ", sep));
+            if state.notifications_enabled {
+                spans.push(Span::styled(
+                    " M ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Rgb(100, 180, 255)),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    " M ",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(Color::Rgb(60, 60, 60)),
+                ));
+            }
+
             if !state.selected_agents.is_empty() {
                 spans.push(Span::styled(
                     format!(" ({}sel)", state.selected_agents.len()),

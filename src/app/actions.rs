@@ -117,6 +117,8 @@ pub enum Action {
     ToggleHideNonAgentSessions,
     /// Toggle hiding non-agent panes within sessions
     ToggleHideNonAgentPanes,
+    /// Toggle desktop notifications
+    ToggleNotifications,
     /// Toggle PR detail panel
     TogglePrPanel,
     /// Open PR URL in browser
@@ -187,6 +189,7 @@ impl Action {
             Action::SearchPrev => "Previous search match",
             Action::SearchConfirm => "Confirm search",
             Action::SearchCancel => "Cancel search",
+            Action::ToggleNotifications => "Toggle desktop notifications",
             Action::ToggleHideNonAgentSessions => "Toggle non-agent sessions",
             Action::ToggleHideNonAgentPanes => "Toggle non-agent panes",
             Action::TogglePrPanel => "Toggle PR detail panel",

@@ -118,6 +118,8 @@ mod tests {
             pid: 1234,
             cmdline: "/usr/bin/claude".to_string(),
             child_commands: Vec::new(),
+            window_active: false,
+            pane_active: false,
         };
         assert!(registry.find_parser_for_pane(&claude_pane).is_some());
 
@@ -132,6 +134,8 @@ mod tests {
             pid: 1235,
             cmdline: "opencode".to_string(),
             child_commands: Vec::new(),
+            window_active: false,
+            pane_active: false,
         };
         assert!(registry.find_parser_for_pane(&opencode_pane).is_some());
 
@@ -147,6 +151,8 @@ mod tests {
             pid: 1236,
             cmdline: "-zsh".to_string(),
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
+            window_active: false,
+            pane_active: false,
         };
         assert!(registry.find_parser_for_pane(&child_claude_pane).is_some());
     }

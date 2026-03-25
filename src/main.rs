@@ -33,6 +33,10 @@ struct Cli {
     #[arg(long)]
     popup: bool,
 
+    /// Disable desktop notifications
+    #[arg(long)]
+    no_notifications: bool,
+
     /// 設定ファイルのパスを表示
     #[arg(long)]
     show_config_path: bool,
@@ -86,6 +90,9 @@ async fn main() -> Result<()> {
     config.poll_interval_ms = cli.poll_interval;
     config.capture_lines = cli.capture_lines;
     config.popup = cli.popup;
+    if cli.no_notifications {
+        config.notifications.enabled = false;
+    }
 
     // Run the application
     run_app(config).await

@@ -231,6 +231,8 @@ pub struct AppState {
     pub show_pr_panel: bool,
     /// Paths for which the PR panel has been auto-opened
     pr_auto_opened: HashSet<String>,
+    /// Whether desktop notifications are enabled (mirrors Notifier state for UI display)
+    pub notifications_enabled: bool,
 }
 
 impl AppState {
@@ -269,6 +271,7 @@ impl AppState {
             pr_info: HashMap::new(),
             show_pr_panel: false,
             pr_auto_opened: HashSet::new(),
+            notifications_enabled: true,
         }
     }
 

@@ -75,6 +75,7 @@ impl MonitorTask {
         refresh_process_cache();
 
         let all_sessions = self.tmux_client.list_sessions().unwrap_or_default();
+        let client_sessions = self.tmux_client.list_client_sessions().unwrap_or_default();
         let panes = self.tmux_client.list_panes()?;
         let mut tree = AgentTree::new();
 
@@ -173,6 +174,9 @@ impl MonitorTask {
                 agent.subagents = subagents;
                 agent.last_content = content;
                 agent.context_remaining = context_remaining;
+                agent.is_active_pane = pane.window_active
+                    && pane.pane_active
+                    && client_sessions.contains(&pane.session);
                 agent.touch(); // Update last_updated
 
                 tree.root_agents.push(agent);

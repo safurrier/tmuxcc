@@ -37,7 +37,7 @@ impl TmuxClient {
                 "list-panes",
                 "-a",
                 "-F",
-                "#{session_name}:#{window_index}.#{pane_index}\t#{window_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}",
+                "#{session_name}:#{window_index}.#{pane_index}\t#{window_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}\t#{window_active}\t#{pane_active}",
             ])
             .output()
             .context("Failed to execute tmux list-panes")?;
@@ -299,6 +299,21 @@ impl TmuxClient {
         }
 
         Ok(())
+    }
+
+    /// Lists sessions that have an attached client (i.e., sessions the user is actually looking at)
+    pub fn list_client_sessions(&self) -> Result<std::collections::HashSet<String>> {
+        let output = Command::new("tmux")
+            .args(["list-clients", "-F", "#{client_session}"])
+            .output()
+            .context("Failed to execute tmux list-clients")?;
+
+        if !output.status.success() {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.lines().map(|s| s.to_string()).collect())
     }
 
     /// Lists all tmux session names

@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
-        MouseEventKind,
+        self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+        Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -18,6 +18,7 @@ use crate::app::{
     generate_flash_labels, Action, AppState, Config, FlashMode, FlashTarget, TreeCursor,
 };
 use crate::monitor::{MonitorTask, SystemStatsCollector};
+use crate::notifications::{AgentNotificationInfo, Notifier};
 use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;
 
@@ -32,7 +33,12 @@ pub async fn run_app(config: Config) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableFocusChange
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -45,6 +51,7 @@ pub async fn run_app(config: Config) -> Result<()> {
     );
     let mut state = AppState::new();
     state.popup_mode = config.popup;
+    state.notifications_enabled = config.notifications.enabled;
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -72,6 +79,9 @@ pub async fn run_app(config: Config) -> Result<()> {
     // Create system stats collector
     let mut system_stats = SystemStatsCollector::new();
 
+    // Create notifier
+    let mut notifier = Notifier::new(&config.notifications);
+
     // Create PR monitor task
     let (pr_tx, mut pr_rx) = mpsc::channel(16);
     let (paths_tx, paths_rx) = tokio::sync::watch::channel(Vec::new());
@@ -95,6 +105,7 @@ pub async fn run_app(config: Config) -> Result<()> {
         &paths_tx,
         &tmux_client,
         &mut system_stats,
+        &mut notifier,
     )
     .await;
 
@@ -107,13 +118,15 @@ pub async fn run_app(config: Config) -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableFocusChange
     )?;
     terminal.show_cursor()?;
 
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
@@ -122,6 +135,7 @@ async fn run_loop(
     paths_tx: &tokio::sync::watch::Sender<Vec<String>>,
     tmux_client: &TmuxClient,
     system_stats: &mut SystemStatsCollector,
+    notifier: &mut Notifier,
 ) -> Result<()> {
     loop {
         // Advance animation tick
@@ -205,6 +219,44 @@ async fn run_loop(
         tokio::select! {
             // Handle monitor updates
             Some(update) = rx.recv() => {
+                // Diff agent statuses before overwriting to fire notifications
+                {
+                    use std::collections::HashMap;
+                    let old_statuses: HashMap<&str, &crate::agents::AgentStatus> = state
+                        .agents
+                        .root_agents
+                        .iter()
+                        .map(|a| (a.id.as_str(), &a.status))
+                        .collect();
+
+                    let selected_id = state.selected_agent().map(|a| a.id.clone());
+
+                    for new_agent in &update.agents.root_agents {
+                        if let Some(old_status) = old_statuses.get(new_agent.id.as_str()) {
+                            let is_selected = selected_id.as_deref() == Some(&new_agent.id);
+                            let info = AgentNotificationInfo {
+                                agent_id: new_agent.id.clone(),
+                                agent_label: format!(
+                                    "{} \u{00b7} {}",
+                                    new_agent.agent_type.short_name(),
+                                    new_agent.short_path()
+                                ),
+                                session: new_agent.session.clone(),
+                                window: new_agent.window,
+                                window_name: new_agent.window_name.clone(),
+                                target: new_agent.target.clone(),
+                                is_active_pane: new_agent.is_active_pane,
+                            };
+                            notifier.check_and_notify(
+                                &info,
+                                old_status,
+                                &new_agent.status,
+                                is_selected,
+                            );
+                        }
+                    }
+                }
+
                 state.agents = update.agents;
                 state.all_sessions = update.all_sessions;
                 // Clamp cursor to valid range
@@ -231,6 +283,16 @@ async fn run_loop(
                 // Process all pending events to avoid input lag
                 while event::poll(Duration::from_millis(0))? {
                     let event = event::read()?;
+
+                    // Handle focus events for notification suppression
+                    if let Event::FocusGained = event {
+                        notifier.app_focused = true;
+                        continue;
+                    }
+                    if let Event::FocusLost = event {
+                        notifier.app_focused = false;
+                        continue;
+                    }
 
                     // Handle mouse events
                     if let Event::Mouse(mouse) = event {
@@ -504,6 +566,10 @@ async fn run_loop(
                                 if let Some(cursor) = state.pre_search_cursor.take() {
                                     state.cursor = cursor;
                                 }
+                            }
+                            Action::ToggleNotifications => {
+                                notifier.enabled = !notifier.enabled;
+                                state.notifications_enabled = notifier.enabled;
                             }
                             Action::ToggleHideNonAgentSessions => {
                                 state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
@@ -981,6 +1047,7 @@ pub(crate) fn map_key_to_action(
         KeyCode::Char('[') => Action::CollapseAll,
         KeyCode::Char(']') => Action::ExpandAll,
 
+        KeyCode::Char('M') => Action::ToggleNotifications,
         KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,

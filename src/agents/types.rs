@@ -207,6 +207,8 @@ pub struct MonitoredAgent {
     pub last_updated: Instant,
     /// Context remaining percentage (0-100), if detectable
     pub context_remaining: Option<u8>,
+    /// Whether this pane is the currently active pane in tmux
+    pub is_active_pane: bool,
 }
 
 impl MonitoredAgent {
@@ -240,6 +242,7 @@ impl MonitoredAgent {
             started_at: now,
             last_updated: now,
             context_remaining: None,
+            is_active_pane: false,
         }
     }
 

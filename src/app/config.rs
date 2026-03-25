@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::notifications::NotificationConfig;
+
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -24,6 +26,10 @@ pub struct Config {
     /// Whether PR monitoring is enabled
     #[serde(default = "default_pr_enabled")]
     pub pr_enabled: bool,
+
+    /// Notification settings
+    #[serde(default)]
+    pub notifications: NotificationConfig,
 
     /// Running inside a tmux popup (auto-quit on focus/go)
     #[serde(skip)]
@@ -63,6 +69,7 @@ impl Default for Config {
             agent_patterns: Vec::new(),
             pr_poll_interval_ms: default_pr_poll_interval(),
             pr_enabled: default_pr_enabled(),
+            notifications: NotificationConfig::default(),
             popup: false,
         }
     }
