@@ -1055,19 +1055,15 @@ cycle = "sequential"
         assert!(deserialized.profiles.contains_key("default"));
         assert!(deserialized.profiles.contains_key("itysl"));
         let sounds = deserialized.resolve_sounds();
-        assert_eq!(
-            sounds.completed,
-            "~/.config/tmuxcc/sounds/completed/"
-        );
+        assert_eq!(sounds.completed, "~/.config/tmuxcc/sounds/completed/");
     }
 
     #[test]
     fn test_profiles_cycle() {
         let mut config = NotificationConfig::default();
-        config.profiles.insert(
-            "alt".to_string(),
-            NotificationSounds::default(),
-        );
+        config
+            .profiles
+            .insert("alt".to_string(), NotificationSounds::default());
         // Start on "default"
         assert_eq!(config.active_profile, "default");
         config.cycle_profile();

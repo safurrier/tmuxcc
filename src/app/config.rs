@@ -189,9 +189,6 @@ cycle = "random"
         assert!(parsed.notifications.profiles.contains_key("default"));
         assert!(parsed.notifications.profiles.contains_key("itysl"));
         let sounds = parsed.notifications.resolve_sounds();
-        assert_eq!(
-            sounds.completed,
-            "~/.config/tmuxcc/sounds/completed/"
-        );
+        assert_eq!(sounds.completed, "~/.config/tmuxcc/sounds/completed/");
     }
 }
