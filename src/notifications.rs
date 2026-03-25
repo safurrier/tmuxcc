@@ -96,6 +96,15 @@ impl SoundSource {
             }
         } else if value == "~" {
             dirs::home_dir().unwrap_or_else(|| PathBuf::from(value))
+        } else if value.starts_with('/') {
+            PathBuf::from(value)
+        } else if value.starts_with('.') || value.contains('/') {
+            // Relative path — resolve relative to config dir (~/.config/tmuxcc/)
+            if let Some(config_dir) = dirs::config_dir() {
+                config_dir.join("tmuxcc").join(value)
+            } else {
+                PathBuf::from(value)
+            }
         } else {
             PathBuf::from(value)
         };
