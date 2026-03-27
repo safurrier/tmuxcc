@@ -203,7 +203,8 @@ pub struct AppState {
     /// Semantic cursor (session header, agent, or non-agent pane)
     pub cursor: TreeCursor,
     /// Multi-selected agent indices
-    pub selected_agents: HashSet<usize>,
+    /// Selected agents by target string (stable across re-sorts)
+    pub selected_agents: HashSet<String>,
     /// Collapsed session names
     pub collapsed_sessions: HashSet<String>,
     /// Which panel is focused
@@ -796,19 +797,19 @@ impl AppState {
 
     /// Toggles selection of the current agent
     pub fn toggle_selection(&mut self) {
-        if let Some(idx) = self.selected_agent_index() {
-            if self.selected_agents.contains(&idx) {
-                self.selected_agents.remove(&idx);
+        if let Some(target) = self.selected_pane_target() {
+            if self.selected_agents.contains(&target) {
+                self.selected_agents.remove(&target);
             } else {
-                self.selected_agents.insert(idx);
+                self.selected_agents.insert(target);
             }
         }
     }
 
     /// Selects all agents
     pub fn select_all(&mut self) {
-        for i in 0..self.agents.root_agents.len() {
-            self.selected_agents.insert(i);
+        for agent in &self.agents.root_agents {
+            self.selected_agents.insert(agent.target.clone());
         }
     }
 
@@ -826,15 +827,22 @@ impl AppState {
                 vec![]
             }
         } else {
-            let mut indices: Vec<usize> = self.selected_agents.iter().copied().collect();
-            indices.sort();
-            indices
+            self.agents
+                .root_agents
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| self.selected_agents.contains(&a.target))
+                .map(|(i, _)| i)
+                .collect()
         }
     }
 
-    /// Check if an agent is in multi-selection
+    /// Check if an agent is in multi-selection by index (resolves to target)
     pub fn is_multi_selected(&self, index: usize) -> bool {
-        self.selected_agents.contains(&index)
+        self.agents
+            .root_agents
+            .get(index)
+            .is_some_and(|a| self.selected_agents.contains(&a.target))
     }
 
     /// Toggle collapse of the current session
@@ -1038,10 +1046,11 @@ fn session_status_priority(agents: &[MonitoredAgent]) -> u8 {
 }
 
 /// Priority for a single agent status (lower = higher priority)
+/// AwaitingApproval is highest because it needs user action.
 fn agent_status_priority(status: &AgentStatus) -> u8 {
     match status {
-        AgentStatus::Processing { .. } => 0,
-        AgentStatus::AwaitingApproval { .. } => 1,
+        AgentStatus::AwaitingApproval { .. } => 0,
+        AgentStatus::Processing { .. } => 1,
         AgentStatus::Error { .. } => 2,
         AgentStatus::Unknown => 3,
         AgentStatus::Idle => 4,
@@ -1618,12 +1627,12 @@ mod tests {
         let mut agents = vec![idle_agent, processing_agent, awaiting_agent];
         sort_agents(&mut agents, SortMode::Status);
 
-        // Processing (priority 0) should come first, then AwaitingApproval (1), then Idle (4)
-        assert!(matches!(agents[0].status, AgentStatus::Processing { .. }));
+        // AwaitingApproval (priority 0) should come first, then Processing (1), then Idle (4)
         assert!(matches!(
-            agents[1].status,
+            agents[0].status,
             AgentStatus::AwaitingApproval { .. }
         ));
+        assert!(matches!(agents[1].status, AgentStatus::Processing { .. }));
         assert!(matches!(agents[2].status, AgentStatus::Idle));
     }
 

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -267,9 +268,9 @@ async fn run_loop(
                 sort_agents(&mut state.agents.root_agents, state.sort_mode);
                 // Clamp cursor to valid range
                 state.clamp_cursor();
-                // Clean up invalid selections
-                let max_idx = state.agents.root_agents.len();
-                state.selected_agents.retain(|&idx| idx < max_idx);
+                // Clean up selections for agents that no longer exist
+                let valid_targets: HashSet<&str> = state.agents.root_agents.iter().map(|a| a.target.as_str()).collect();
+                state.selected_agents.retain(|t| valid_targets.contains(t.as_str()));
 
                 // Push current agent paths to PR monitor
                 let agent_paths: Vec<String> = state.agents.root_agents.iter()

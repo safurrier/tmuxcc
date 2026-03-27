@@ -1094,7 +1094,6 @@ cycle = "sequential"
 
     #[test]
     fn test_reload_sounds() {
-        let config = NotificationConfig::default();
         let mut notifier = make_notifier();
 
         // Reload with custom sounds
