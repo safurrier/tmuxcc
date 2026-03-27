@@ -795,13 +795,16 @@ impl AppState {
         }
     }
 
-    /// Toggles selection of the current agent
+    /// Toggles selection of the current agent (only agents, not non-agent panes)
     pub fn toggle_selection(&mut self) {
-        if let Some(target) = self.selected_pane_target() {
-            if self.selected_agents.contains(&target) {
-                self.selected_agents.remove(&target);
-            } else {
-                self.selected_agents.insert(target);
+        if let Some(idx) = self.selected_agent_index() {
+            if let Some(agent) = self.agents.get_agent(idx) {
+                let target = agent.target.clone();
+                if self.selected_agents.contains(&target) {
+                    self.selected_agents.remove(&target);
+                } else {
+                    self.selected_agents.insert(target);
+                }
             }
         }
     }
