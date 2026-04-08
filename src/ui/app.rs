@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +16,8 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
 use crate::app::{
-    generate_flash_labels, Action, AppState, Config, FlashMode, FlashTarget, TreeCursor,
+    generate_flash_labels, sort_agents, Action, AppState, Config, FlashMode, FlashTarget,
+    TreeCursor,
 };
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::notifications::{AgentNotificationInfo, Notifier};
@@ -29,7 +31,7 @@ use super::components::{
 use super::Layout;
 
 /// Runs the main application loop
-pub async fn run_app(config: Config) -> Result<()> {
+pub async fn run_app(mut config: Config) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -52,6 +54,7 @@ pub async fn run_app(config: Config) -> Result<()> {
     let mut state = AppState::new();
     state.popup_mode = config.popup;
     state.notifications_enabled = config.notifications.enabled;
+    state.notification_profile = config.notifications.active_profile.clone();
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -106,6 +109,7 @@ pub async fn run_app(config: Config) -> Result<()> {
         &tmux_client,
         &mut system_stats,
         &mut notifier,
+        &mut config.notifications,
     )
     .await;
 
@@ -136,6 +140,7 @@ async fn run_loop(
     tmux_client: &TmuxClient,
     system_stats: &mut SystemStatsCollector,
     notifier: &mut Notifier,
+    notification_config: &mut crate::notifications::NotificationConfig,
 ) -> Result<()> {
     loop {
         // Advance animation tick
@@ -259,11 +264,13 @@ async fn run_loop(
 
                 state.agents = update.agents;
                 state.all_sessions = update.all_sessions;
+                // Apply current sort mode to the incoming agents
+                sort_agents(&mut state.agents.root_agents, state.sort_mode);
                 // Clamp cursor to valid range
                 state.clamp_cursor();
-                // Clean up invalid selections
-                let max_idx = state.agents.root_agents.len();
-                state.selected_agents.retain(|&idx| idx < max_idx);
+                // Clean up selections for agents that no longer exist
+                let valid_targets: HashSet<&str> = state.agents.root_agents.iter().map(|a| a.target.as_str()).collect();
+                state.selected_agents.retain(|t| valid_targets.contains(t.as_str()));
 
                 // Push current agent paths to PR monitor
                 let agent_paths: Vec<String> = state.agents.root_agents.iter()
@@ -571,11 +578,21 @@ async fn run_loop(
                                 notifier.enabled = !notifier.enabled;
                                 state.notifications_enabled = notifier.enabled;
                             }
+                            Action::CycleNotificationProfile => {
+                                notification_config.cycle_profile();
+                                let sounds = notification_config.resolve_sounds();
+                                notifier.reload_sounds(sounds);
+                                state.notification_profile =
+                                    notification_config.active_profile.clone();
+                            }
                             Action::ToggleHideNonAgentSessions => {
                                 state.hide_non_agent_sessions = !state.hide_non_agent_sessions;
                             }
                             Action::ToggleHideNonAgentPanes => {
                                 state.hide_non_agent_panes = !state.hide_non_agent_panes;
+                            }
+                            Action::CycleSortMode => {
+                                state.cycle_sort_mode();
                             }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
@@ -1047,10 +1064,12 @@ pub(crate) fn map_key_to_action(
         KeyCode::Char('[') => Action::CollapseAll,
         KeyCode::Char(']') => Action::ExpandAll,
 
-        KeyCode::Char('M') => Action::ToggleNotifications,
+        KeyCode::Char('m') => Action::ToggleNotifications,
+        KeyCode::Char('M') => Action::CycleNotificationProfile,
         KeyCode::Char('H') => Action::ToggleHideNonAgentSessions,
         KeyCode::Char('V') => Action::ToggleHideNonAgentPanes,
-        KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
+        KeyCode::Char('s') => Action::CycleSortMode,
+        KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
         KeyCode::Char('p') => Action::TogglePrPanel,
         KeyCode::Char('o') => Action::OpenPrUrl,
@@ -1178,5 +1197,33 @@ mod tests {
         let state = AppState::new();
         let action = map_key_to_action(KeyCode::Esc, KeyModifiers::NONE, &state);
         assert_eq!(action, Action::Quit);
+    }
+
+    #[test]
+    fn test_sidebar_s_cycles_sort() {
+        let state = AppState::new(); // sidebar focused by default
+        let action = map_key_to_action(KeyCode::Char('s'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::CycleSortMode);
+    }
+
+    #[test]
+    fn test_sidebar_shift_s_toggles_subagent_log() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('S'), KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::ToggleSubagentLog);
+    }
+
+    #[test]
+    fn test_sidebar_m_toggles_notifications() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('m'), KeyModifiers::NONE, &state);
+        assert_eq!(action, Action::ToggleNotifications);
+    }
+
+    #[test]
+    fn test_sidebar_shift_m_cycles_profile() {
+        let state = AppState::new();
+        let action = map_key_to_action(KeyCode::Char('M'), KeyModifiers::SHIFT, &state);
+        assert_eq!(action, Action::CycleNotificationProfile);
     }
 }

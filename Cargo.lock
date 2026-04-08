@@ -1047,6 +1047,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
+ "indexmap",
  "parking_lot",
  "ratatui",
  "regex",

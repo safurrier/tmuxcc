@@ -210,7 +210,13 @@ impl HelpWidget {
                 desc_style,
             ),
             key(
-                "  s / S        ",
+                "  s            ",
+                "Cycle sort mode (Recent / Status)",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  S            ",
                 "Toggle subagent log panel",
                 key_style,
                 desc_style,
@@ -224,6 +230,18 @@ impl HelpWidget {
             key(
                 "  p            ",
                 "Toggle PR detail panel (when PR detected)",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  m            ",
+                "Mute/unmute desktop notifications",
+                key_style,
+                desc_style,
+            ),
+            key(
+                "  M            ",
+                "Cycle notification sound profile",
                 key_style,
                 desc_style,
             ),

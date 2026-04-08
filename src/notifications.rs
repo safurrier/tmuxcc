@@ -214,10 +214,17 @@ pub struct NotificationConfig {
     pub enabled: bool,
     #[serde(default = "default_cooldown_secs")]
     pub cooldown_secs: u64,
-    #[serde(default)]
-    pub sounds: NotificationSounds,
+    /// Active notification sound profile name
+    #[serde(default = "default_active_profile")]
+    pub active_profile: String,
+    /// Named sound profiles
+    #[serde(default = "default_profiles")]
+    pub profiles: HashMap<String, NotificationSounds>,
     #[serde(default)]
     pub backend: NotificationBackendConfig,
+    /// Legacy: flat sounds config for backward compat
+    #[serde(default, skip_serializing)]
+    sounds: Option<NotificationSounds>,
 }
 
 fn default_enabled() -> bool {
@@ -228,13 +235,75 @@ fn default_cooldown_secs() -> u64 {
     10
 }
 
+fn default_active_profile() -> String {
+    "default".to_string()
+}
+
+fn default_profiles() -> HashMap<String, NotificationSounds> {
+    let mut m = HashMap::new();
+    m.insert("default".to_string(), NotificationSounds::default());
+    m
+}
+
+impl NotificationConfig {
+    /// Resolve the active sound profile. Falls back to "default", then to NotificationSounds::default().
+    pub fn resolve_sounds(&self) -> &NotificationSounds {
+        // First try the active profile
+        if let Some(profile) = self.profiles.get(&self.active_profile) {
+            return profile;
+        }
+        // Fall back to "default" profile
+        if let Some(profile) = self.profiles.get("default") {
+            return profile;
+        }
+        // This shouldn't happen since default_profiles always has "default",
+        // but return a static fallback for safety
+        static FALLBACK: std::sync::LazyLock<NotificationSounds> =
+            std::sync::LazyLock::new(NotificationSounds::default);
+        &FALLBACK
+    }
+
+    /// Return the names of all available profiles
+    pub fn profile_names(&self) -> Vec<&str> {
+        self.profiles.keys().map(|k| k.as_str()).collect()
+    }
+
+    /// Cycle the active profile to the next one (alphabetical order)
+    pub fn cycle_profile(&mut self) {
+        let mut names: Vec<&String> = self.profiles.keys().collect();
+        names.sort();
+        if names.is_empty() {
+            return;
+        }
+        let current_idx = names.iter().position(|n| **n == self.active_profile);
+        let next_idx = match current_idx {
+            Some(i) => (i + 1) % names.len(),
+            None => 0,
+        };
+        self.active_profile = names[next_idx].clone();
+    }
+
+    /// Post-deserialization migration: if legacy `sounds` field is present and
+    /// profiles only has the default entry, use sounds as the "default" profile.
+    pub fn migrate_legacy(&mut self) {
+        if let Some(sounds) = self.sounds.take() {
+            // Only migrate if profiles is exactly the default (one "default" entry)
+            if self.profiles.len() <= 1 {
+                self.profiles.insert("default".to_string(), sounds);
+            }
+        }
+    }
+}
+
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
             cooldown_secs: default_cooldown_secs(),
-            sounds: NotificationSounds::default(),
+            active_profile: default_active_profile(),
+            profiles: default_profiles(),
             backend: NotificationBackendConfig::default(),
+            sounds: None,
         }
     }
 }
@@ -268,22 +337,48 @@ impl Notifier {
         let backend = detect_backend(&config.backend);
         tracing::info!(%backend, "notification backend selected");
 
-        let cycle_mode = if config.sounds.cycle.eq_ignore_ascii_case("sequential") {
+        let sounds = config.resolve_sounds();
+        let cycle_mode = if sounds.cycle.eq_ignore_ascii_case("sequential") {
             CycleMode::Sequential
         } else {
             CycleMode::Random
         };
+
+        tracing::info!(
+            active_profile = %config.active_profile,
+            completed = %sounds.completed,
+            needs_input = %sounds.needs_input,
+            cycle = %sounds.cycle,
+            "notification sound profile loaded"
+        );
 
         Self {
             last_notified: HashMap::new(),
             cooldown: Duration::from_secs(config.cooldown_secs),
             enabled: config.enabled,
             app_focused: false,
-            completed_sound: SoundSource::from_config(&config.sounds.completed),
-            needs_input_sound: SoundSource::from_config(&config.sounds.needs_input),
+            completed_sound: SoundSource::from_config(&sounds.completed),
+            needs_input_sound: SoundSource::from_config(&sounds.needs_input),
             cycle_mode,
             backend,
         }
+    }
+
+    /// Reload sounds from a new profile's config
+    pub fn reload_sounds(&mut self, sounds: &NotificationSounds) {
+        self.cycle_mode = if sounds.cycle.eq_ignore_ascii_case("sequential") {
+            CycleMode::Sequential
+        } else {
+            CycleMode::Random
+        };
+        self.completed_sound = SoundSource::from_config(&sounds.completed);
+        self.needs_input_sound = SoundSource::from_config(&sounds.needs_input);
+        tracing::info!(
+            completed = %sounds.completed,
+            needs_input = %sounds.needs_input,
+            cycle = %sounds.cycle,
+            "notification sounds reloaded"
+        );
     }
 
     /// Check a status transition and fire a notification if warranted.
@@ -893,5 +988,130 @@ mod tests {
             detect_backend(&NotificationBackendConfig::Osascript),
             NotificationBackend::Osascript
         );
+    }
+
+    #[test]
+    fn test_profiles_default() {
+        let config = NotificationConfig::default();
+        assert_eq!(config.active_profile, "default");
+        assert!(config.profiles.contains_key("default"));
+        let sounds = config.resolve_sounds();
+        assert_eq!(sounds.completed, "Tink");
+        assert_eq!(sounds.needs_input, "Ping");
+    }
+
+    #[test]
+    fn test_profiles_active_selection() {
+        let mut config = NotificationConfig::default();
+        config.profiles.insert(
+            "custom".to_string(),
+            NotificationSounds {
+                completed: "Glass".to_string(),
+                needs_input: "Submarine".to_string(),
+                cycle: "sequential".to_string(),
+            },
+        );
+        config.active_profile = "custom".to_string();
+        let sounds = config.resolve_sounds();
+        assert_eq!(sounds.completed, "Glass");
+        assert_eq!(sounds.needs_input, "Submarine");
+        assert_eq!(sounds.cycle, "sequential");
+    }
+
+    #[test]
+    fn test_profiles_unknown_fallback() {
+        let config = NotificationConfig {
+            active_profile: "nonexistent".to_string(),
+            ..NotificationConfig::default()
+        };
+        // Should fall back to "default" profile
+        let sounds = config.resolve_sounds();
+        assert_eq!(sounds.completed, "Tink");
+        assert_eq!(sounds.needs_input, "Ping");
+    }
+
+    #[test]
+    fn test_profiles_backward_compat() {
+        // Simulate old config with [notifications.sounds] section
+        let toml_str = r#"
+enabled = true
+cooldown_secs = 10
+
+[sounds]
+completed = "Glass"
+needs_input = "Submarine"
+cycle = "sequential"
+"#;
+        let mut config: NotificationConfig = toml::from_str(toml_str).unwrap();
+        config.migrate_legacy();
+
+        // The legacy sounds should have been migrated into the "default" profile
+        let sounds = config.resolve_sounds();
+        assert_eq!(sounds.completed, "Glass");
+        assert_eq!(sounds.needs_input, "Submarine");
+        assert_eq!(sounds.cycle, "sequential");
+    }
+
+    #[test]
+    fn test_profiles_toml_roundtrip() {
+        let mut config = NotificationConfig::default();
+        config.profiles.insert(
+            "itysl".to_string(),
+            NotificationSounds {
+                completed: "~/.config/tmuxcc/sounds/completed/".to_string(),
+                needs_input: "~/.config/tmuxcc/sounds/needs_input/".to_string(),
+                cycle: "random".to_string(),
+            },
+        );
+        config.active_profile = "itysl".to_string();
+
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: NotificationConfig = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.active_profile, "itysl");
+        assert!(deserialized.profiles.contains_key("default"));
+        assert!(deserialized.profiles.contains_key("itysl"));
+        let sounds = deserialized.resolve_sounds();
+        assert_eq!(sounds.completed, "~/.config/tmuxcc/sounds/completed/");
+    }
+
+    #[test]
+    fn test_profiles_cycle() {
+        let mut config = NotificationConfig::default();
+        config
+            .profiles
+            .insert("alt".to_string(), NotificationSounds::default());
+        // Start on "default"
+        assert_eq!(config.active_profile, "default");
+        config.cycle_profile();
+        // After cycling, should move to next alphabetically
+        // "alt" < "default", so sorted order is ["alt", "default"]
+        // From "default" (index 1) -> wraps to "alt" (index 0)
+        assert_eq!(config.active_profile, "alt");
+        config.cycle_profile();
+        assert_eq!(config.active_profile, "default");
+    }
+
+    #[test]
+    fn test_reload_sounds() {
+        let mut notifier = make_notifier();
+
+        // Reload with custom sounds
+        let custom = NotificationSounds {
+            completed: "Glass".to_string(),
+            needs_input: "Hero".to_string(),
+            cycle: "sequential".to_string(),
+        };
+        notifier.reload_sounds(&custom);
+
+        // Verify by resolving — system sounds should produce SystemSound variants
+        let resolved = notifier.completed_sound.resolve(notifier.cycle_mode);
+        assert!(matches!(resolved, ResolvedSound::SystemSound(ref s) if s == "Glass"));
+
+        let resolved = notifier.needs_input_sound.resolve(notifier.cycle_mode);
+        assert!(matches!(resolved, ResolvedSound::SystemSound(ref s) if s == "Hero"));
+
+        // Cycle mode should have changed to sequential
+        assert_eq!(notifier.cycle_mode, CycleMode::Sequential);
     }
 }

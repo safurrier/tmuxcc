@@ -1,8 +1,37 @@
-use crate::agents::MonitoredAgent;
+use crate::agents::{AgentStatus, MonitoredAgent};
 use crate::git::types::PrLookupResult;
 use crate::monitor::SystemStats;
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
+
+/// Sort mode for the sidebar tree view
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortMode {
+    /// Sort sessions by most recent activity (default)
+    #[default]
+    Activity,
+    /// Sort sessions by agent status priority (Processing first, then AwaitingApproval, etc.)
+    Status,
+}
+
+impl SortMode {
+    /// Cycle to the next sort mode
+    pub fn next(self) -> Self {
+        match self {
+            SortMode::Activity => SortMode::Status,
+            SortMode::Status => SortMode::Activity,
+        }
+    }
+
+    /// Return a human-readable label for the footer badge
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortMode::Activity => "Recent",
+            SortMode::Status => "Status",
+        }
+    }
+}
 
 /// A pane that is not running a recognized agent
 #[derive(Debug, Clone)]
@@ -174,7 +203,8 @@ pub struct AppState {
     /// Semantic cursor (session header, agent, or non-agent pane)
     pub cursor: TreeCursor,
     /// Multi-selected agent indices
-    pub selected_agents: HashSet<usize>,
+    /// Selected agents by target string (stable across re-sorts)
+    pub selected_agents: HashSet<String>,
     /// Collapsed session names
     pub collapsed_sessions: HashSet<String>,
     /// Which panel is focused
@@ -233,6 +263,10 @@ pub struct AppState {
     pr_auto_opened: HashSet<String>,
     /// Whether desktop notifications are enabled (mirrors Notifier state for UI display)
     pub notifications_enabled: bool,
+    /// Active notification sound profile name (mirrors config for UI display)
+    pub notification_profile: String,
+    /// Current sort mode for the sidebar tree
+    pub sort_mode: SortMode,
 }
 
 impl AppState {
@@ -272,27 +306,29 @@ impl AppState {
             show_pr_panel: false,
             pr_auto_opened: HashSet::new(),
             notifications_enabled: true,
+            notification_profile: "default".to_string(),
+            sort_mode: SortMode::default(),
         }
     }
 
-    /// Build the flat navigation list: session headers + visible agents + non-agent panes in display order
+    /// Build the flat navigation list: session headers + visible agents + non-agent panes in display order.
+    /// Uses IndexMap to preserve the insertion order from the sorted agents list.
     pub fn build_nav_items(&self) -> Vec<NavItem> {
-        use std::collections::BTreeMap;
-
-        // Group agents by session
-        let mut agent_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        // Group agents by session, preserving insertion order (from sorted agents)
+        let mut agent_sessions: IndexMap<&str, Vec<usize>> = IndexMap::new();
         for (idx, agent) in self.agents.root_agents.iter().enumerate() {
             agent_sessions.entry(&agent.session).or_default().push(idx);
         }
 
-        // Group non-agent panes by session
-        let mut nap_sessions: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        // Group non-agent panes by session, preserving insertion order
+        let mut nap_sessions: IndexMap<&str, Vec<usize>> = IndexMap::new();
         for (idx, nap) in self.agents.non_agent_panes.iter().enumerate() {
             nap_sessions.entry(&nap.session).or_default().push(idx);
         }
 
-        // Collect all session names (from agents, non-agent panes, and all_sessions)
-        let mut all_session_names: BTreeMap<&str, ()> = BTreeMap::new();
+        // Collect all session names preserving the order from agents first,
+        // then non-agent panes, then all_sessions for any remaining
+        let mut all_session_names: IndexMap<&str, ()> = IndexMap::new();
         for s in agent_sessions.keys() {
             all_session_names.insert(s, ());
         }
@@ -759,21 +795,24 @@ impl AppState {
         }
     }
 
-    /// Toggles selection of the current agent
+    /// Toggles selection of the current agent (only agents, not non-agent panes)
     pub fn toggle_selection(&mut self) {
         if let Some(idx) = self.selected_agent_index() {
-            if self.selected_agents.contains(&idx) {
-                self.selected_agents.remove(&idx);
-            } else {
-                self.selected_agents.insert(idx);
+            if let Some(agent) = self.agents.get_agent(idx) {
+                let target = agent.target.clone();
+                if self.selected_agents.contains(&target) {
+                    self.selected_agents.remove(&target);
+                } else {
+                    self.selected_agents.insert(target);
+                }
             }
         }
     }
 
     /// Selects all agents
     pub fn select_all(&mut self) {
-        for i in 0..self.agents.root_agents.len() {
-            self.selected_agents.insert(i);
+        for agent in &self.agents.root_agents {
+            self.selected_agents.insert(agent.target.clone());
         }
     }
 
@@ -791,15 +830,22 @@ impl AppState {
                 vec![]
             }
         } else {
-            let mut indices: Vec<usize> = self.selected_agents.iter().copied().collect();
-            indices.sort();
-            indices
+            self.agents
+                .root_agents
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| self.selected_agents.contains(&a.target))
+                .map(|(i, _)| i)
+                .collect()
         }
     }
 
-    /// Check if an agent is in multi-selection
+    /// Check if an agent is in multi-selection by index (resolves to target)
     pub fn is_multi_selected(&self, index: usize) -> bool {
-        self.selected_agents.contains(&index)
+        self.agents
+            .root_agents
+            .get(index)
+            .is_some_and(|a| self.selected_agents.contains(&a.target))
     }
 
     /// Toggle collapse of the current session
@@ -925,6 +971,92 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// Cycle to the next sort mode, preserving the currently selected agent
+    pub fn cycle_sort_mode(&mut self) {
+        // Save the current agent's target before sorting
+        let saved_target = self.selected_pane_target();
+
+        self.sort_mode = self.sort_mode.next();
+        sort_agents(&mut self.agents.root_agents, self.sort_mode);
+
+        // Restore cursor to the same agent after re-sorting
+        if let Some(target) = saved_target {
+            if let Some(new_idx) = self
+                .agents
+                .root_agents
+                .iter()
+                .position(|a| a.target == target)
+            {
+                self.cursor = TreeCursor::Agent(new_idx);
+            }
+        }
+    }
+}
+
+/// Sort agents according to the given sort mode
+pub fn sort_agents(agents: &mut Vec<MonitoredAgent>, mode: SortMode) {
+    // Group agents by session, preserving within-session order
+    let mut session_agents: IndexMap<String, Vec<MonitoredAgent>> = IndexMap::new();
+    for agent in agents.drain(..) {
+        session_agents
+            .entry(agent.session.clone())
+            .or_default()
+            .push(agent);
+    }
+
+    // Sort agents within each session by target (window/pane order)
+    for group in session_agents.values_mut() {
+        group.sort_by(|a, b| a.target.cmp(&b.target));
+    }
+
+    // Compute session ordering key and sort sessions
+    let mut session_order: Vec<(String, u8, Instant)> = session_agents
+        .iter()
+        .map(|(session, group)| {
+            let most_recent = group
+                .iter()
+                .map(|a| a.last_updated)
+                .max()
+                .unwrap_or_else(Instant::now);
+            let priority = match mode {
+                SortMode::Activity => 0, // all same priority; sort only by recency
+                SortMode::Status => session_status_priority(group),
+            };
+            (session.clone(), priority, most_recent)
+        })
+        .collect();
+
+    // Sort by priority first, then by most recent activity (most recent first)
+    session_order.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
+
+    // Rebuild agents in sorted order
+    for (session, _, _) in session_order {
+        if let Some(group) = session_agents.swap_remove(&session) {
+            agents.extend(group);
+        }
+    }
+}
+
+/// Compute status priority for a session's agents (lower = higher priority)
+fn session_status_priority(agents: &[MonitoredAgent]) -> u8 {
+    agents
+        .iter()
+        .map(|a| agent_status_priority(&a.status))
+        .min()
+        .unwrap_or(4)
+}
+
+/// Priority for a single agent status (lower = higher priority)
+/// AwaitingApproval is highest because it needs user action.
+fn agent_status_priority(status: &AgentStatus) -> u8 {
+    match status {
+        AgentStatus::AwaitingApproval { .. } => 0,
+        AgentStatus::Processing { .. } => 1,
+        AgentStatus::Error { .. } => 2,
+        AgentStatus::Unknown => 3,
+        AgentStatus::Idle => 4,
     }
 }
 
@@ -1452,5 +1584,96 @@ mod tests {
 
         state.focus_sidebar();
         assert!(state.is_sidebar_focused());
+    }
+
+    #[test]
+    fn test_sort_mode_cycling() {
+        let mode = SortMode::Activity;
+        assert_eq!(mode.next(), SortMode::Status);
+        assert_eq!(mode.next().next(), SortMode::Activity);
+    }
+
+    #[test]
+    fn test_sort_mode_label() {
+        assert_eq!(SortMode::Activity.label(), "Recent");
+        assert_eq!(SortMode::Status.label(), "Status");
+    }
+
+    #[test]
+    fn test_cycle_sort_mode_on_state() {
+        let mut state = AppState::new();
+        assert_eq!(state.sort_mode, SortMode::Activity);
+        state.cycle_sort_mode();
+        assert_eq!(state.sort_mode, SortMode::Status);
+        state.cycle_sort_mode();
+        assert_eq!(state.sort_mode, SortMode::Activity);
+    }
+
+    #[test]
+    fn test_sort_by_status_ordering() {
+        use crate::agents::{AgentStatus, ApprovalType};
+
+        let mut idle_agent = make_agent("idle_sess", "idle_sess:0.0", 0, 0);
+        idle_agent.status = AgentStatus::Idle;
+
+        let mut processing_agent = make_agent("proc_sess", "proc_sess:0.0", 0, 0);
+        processing_agent.status = AgentStatus::Processing {
+            activity: "working".to_string(),
+        };
+
+        let mut awaiting_agent = make_agent("await_sess", "await_sess:0.0", 0, 0);
+        awaiting_agent.status = AgentStatus::AwaitingApproval {
+            approval_type: ApprovalType::FileEdit,
+            details: "test".to_string(),
+        };
+
+        let mut agents = vec![idle_agent, processing_agent, awaiting_agent];
+        sort_agents(&mut agents, SortMode::Status);
+
+        // AwaitingApproval (priority 0) should come first, then Processing (1), then Idle (4)
+        assert!(matches!(
+            agents[0].status,
+            AgentStatus::AwaitingApproval { .. }
+        ));
+        assert!(matches!(agents[1].status, AgentStatus::Processing { .. }));
+        assert!(matches!(agents[2].status, AgentStatus::Idle));
+    }
+
+    #[test]
+    fn test_sort_by_activity_ordering() {
+        let mut old_agent = make_agent("old_sess", "old_sess:0.0", 0, 0);
+        // Manually set last_updated to an earlier time by subtracting duration
+        old_agent.last_updated = Instant::now() - std::time::Duration::from_secs(100);
+
+        let mut recent_agent = make_agent("recent_sess", "recent_sess:0.0", 0, 0);
+        recent_agent.last_updated = Instant::now();
+
+        let mut agents = vec![old_agent, recent_agent];
+        sort_agents(&mut agents, SortMode::Activity);
+
+        // Most recent session should come first
+        assert_eq!(agents[0].session, "recent_sess");
+        assert_eq!(agents[1].session, "old_sess");
+    }
+
+    #[test]
+    fn test_build_nav_items_preserves_sort_order() {
+        let mut state = AppState::new();
+
+        // Add agents in specific order: beta first, then alpha
+        let mut beta_agent = make_agent("beta", "beta:0.0", 0, 0);
+        beta_agent.last_updated = Instant::now();
+        let mut alpha_agent = make_agent("alpha", "alpha:0.0", 0, 0);
+        alpha_agent.last_updated = Instant::now() - std::time::Duration::from_secs(100);
+
+        state.agents.root_agents.push(beta_agent);
+        state.agents.root_agents.push(alpha_agent);
+
+        // build_nav_items should preserve order: beta session first, then alpha
+        let nav = state.build_nav_items();
+        assert_eq!(nav[0], NavItem::Session("beta".to_string()));
+        assert_eq!(nav[1], NavItem::Agent(0)); // beta agent at index 0
+        assert_eq!(nav[2], NavItem::Session("alpha".to_string()));
+        assert_eq!(nav[3], NavItem::Agent(1)); // alpha agent at index 1
     }
 }

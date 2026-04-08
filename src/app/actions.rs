@@ -117,14 +117,18 @@ pub enum Action {
     ToggleHideNonAgentSessions,
     /// Toggle hiding non-agent panes within sessions
     ToggleHideNonAgentPanes,
-    /// Toggle desktop notifications
+    /// Toggle desktop notifications (mute/unmute)
     ToggleNotifications,
+    /// Cycle notification sound profile
+    CycleNotificationProfile,
     /// Toggle PR detail panel
     TogglePrPanel,
     /// Open PR URL in browser
     OpenPrUrl,
     /// Copy PR URL to clipboard
     CopyPrUrl,
+    /// Cycle sort mode (Activity -> Status -> Activity)
+    CycleSortMode,
     /// No action (used for unbound keys)
     None,
 }
@@ -189,12 +193,14 @@ impl Action {
             Action::SearchPrev => "Previous search match",
             Action::SearchConfirm => "Confirm search",
             Action::SearchCancel => "Cancel search",
-            Action::ToggleNotifications => "Toggle desktop notifications",
+            Action::ToggleNotifications => "Mute/unmute notifications",
+            Action::CycleNotificationProfile => "Cycle notification sound profile",
             Action::ToggleHideNonAgentSessions => "Toggle non-agent sessions",
             Action::ToggleHideNonAgentPanes => "Toggle non-agent panes",
             Action::TogglePrPanel => "Toggle PR detail panel",
             Action::OpenPrUrl => "Open PR in browser",
             Action::CopyPrUrl => "Copy PR URL to clipboard",
+            Action::CycleSortMode => "Cycle sort mode",
             Action::None => "",
         }
     }
